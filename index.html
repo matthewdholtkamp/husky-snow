@@ -1,0 +1,920 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  Snowflake, 
+  Shield, 
+  Zap, 
+  Brain, 
+  Heart, 
+  Send, 
+  Dice5, 
+  Map as MapIcon, 
+  User, 
+  Sparkles,
+  Feather,
+  Hammer,
+  Mountain,
+  RefreshCw,
+  AlertTriangle,
+  RotateCcw,
+  BookOpen,
+  Users,
+  Clipboard,
+  LogIn,
+  PlusSquare
+} from 'lucide-react';
+
+// --- Firebase Imports ---
+import { initializeApp } from 'firebase/app';
+import { 
+  getAuth, 
+  signInAnonymously, 
+  onAuthStateChanged,
+  signInWithCustomToken,
+  User as FirebaseUser
+} from 'firebase/auth';
+import { 
+  getFirestore, 
+  doc, 
+  getDoc, 
+  addDoc, 
+  setDoc, 
+  updateDoc, 
+  onSnapshot, 
+  collection, 
+  query, 
+  orderBy,
+  serverTimestamp,
+  Timestamp,
+  DocumentData
+} from 'firebase/firestore';
+
+// --- Types ---
+type Character = {
+  id: string;
+  name: string;
+  role: string;
+  description: string;
+  stats: {
+    strength: number;
+    agility: number;
+    smart: number;
+    spirit: number;
+  };
+  ability: string;
+  color: string;
+  icon: any;
+  loreContext: string; 
+  startingScene: string;
+};
+
+type Player = {
+  userId: string;
+  charName: string;
+};
+
+type GameSession = {
+  hostId: string;
+  players: Player[];
+  createdAt: Timestamp;
+};
+
+type Message = {
+  id: string;
+  role: 'user' | 'model' | 'system' | 'error';
+  text: string;
+  author?: string; // Character Name
+  isRoll?: boolean;
+  timestamp: Timestamp;
+};
+
+type GameState = 'intro' | 'lobby' | 'selection' | 'playing';
+
+// --- Firebase Config (From Environment) ---
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+let firebaseConfig: any;
+try {
+  firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+} catch (e) {
+  console.error("Failed to parse Firebase config", e);
+  firebaseConfig = {};
+}
+const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+// --- Initialize Firebase ---
+let app, auth, db;
+if (firebaseConfig.apiKey) {
+  app = initializeApp(firebaseConfig);
+  auth = getAuth(app);
+  db = getFirestore(app);
+}
+
+// --- Data from "Husky's Snow 4.pdf" ---
+const CHARACTERS: Character[] = [
+  {
+    id: 'shiver',
+    name: 'Shiver',
+    role: 'The Creative Crafter',
+    description: 'The protagonist with mismatched eyes and thin fur. She hears a mysterious telepathic voice ("Mist") and uses creativity to solve problems.',
+    stats: { strength: 8, agility: 12, smart: 18, spirit: 16 },
+    ability: 'Crafting & Telepathy',
+    color: 'bg-indigo-500',
+    icon: Hammer,
+    loreContext: "SHIVER (Player): Has thin fur, mismatched eyes. Crafter Trainee under Snapper (father). Hears telepathic 'Mist' (sarcastic husky). Friends with Flurry, Glacier, Spruce. Rival: Storm (brother).",
+    startingScene: "You wake up in the trainee den, the morning light filtering through the entrance. Your new blue-and-brown crafter harness lies beside you; it has a special cloak attached for warmth because of your thin fur. Suddenly, a sarcastic voice echoes in your mind: *'Finally awake, little star? We have work to do.'* It is Mist. Outside, you can hear your father, Snapper, calling for you to begin your training."
+  },
+  {
+    id: 'glacier',
+    name: 'Glacier',
+    role: 'The Fierce Fighter',
+    description: 'Strong, bold, and protective. She wears an ice-blue armored harness and defends the pack with bravery.',
+    stats: { strength: 18, agility: 14, smart: 10, spirit: 12 },
+    ability: 'Protective Strike',
+    color: 'bg-cyan-600',
+    icon: Shield,
+    loreContext: "GLACIER (Player): Strongest female pup, white with icy eyes. Fighter Trainee. Fiercely protective of Shiver. Wears an ice-blue armored harness. Bold, brave, impulsive. Wants to be like Starwhirl.",
+    startingScene: "The cold air bites at your nose, but you barely feel it. You stand at the edge of the training circle, your ice-blue armored harness glinting in the sun. The older fighters are watching. Today is sparring day. Your mean brother Storm is nearby, bragging about his strength. You know you are stronger than him."
+  },
+  {
+    id: 'flurry',
+    name: 'Flurry',
+    role: 'The Gentle Healer',
+    description: 'Small body but a mountain-sized heart. She learns from Sweetbrush and knows which plants soothe wounds.',
+    stats: { strength: 6, agility: 14, smart: 14, spirit: 18 },
+    ability: 'Soothing Herbs',
+    color: 'bg-purple-400',
+    icon: Heart,
+    loreContext: "FLURRY (Player): Small, light gray/white. Healer Trainee under Sweetbrush (Border Collie). Anxious but has a huge heart. Wears a lavender harness with herb pouches. Close to Shiver. Knows aloe and spiderwebs.",
+    startingScene: "The sharp scent of crushed herbs fills your nose. You are inside the Healer's Cave. Sweetbrush, the wise Border Collie, is sorting berries nearby. 'Flurry,' she barks gently, 'The hunters will be back soon. Check your lavender harness. Do you have enough aloe and spiderwebs? We might need them.'"
+  },
+  {
+    id: 'oak',
+    name: 'Oak',
+    role: 'The Determined Hunter',
+    description: 'Born missing a leg, but faster than anyone realizes. He uses traps and determination to prove he is not weak.',
+    stats: { strength: 10, agility: 16, smart: 15, spirit: 15 },
+    ability: 'Trap Mastery',
+    color: 'bg-emerald-600',
+    icon: Zap,
+    loreContext: "OAK (Player): Missing back left leg. Brown with a white star. Mother Dragonfly is over-protective. Determined Hunter. Shiver made his camo harness. Proved himself by catching a giant fish with a net.",
+    startingScene: "You are standing by the rushing river, the spray cool on your face. This is where you caught the giant fish. Your camo harness fits snugly, holding the nets and traps Shiver made for you. Your missing leg doesn't bother you—you are fast. But up on the ridge, you see your mother, Dragonfly, watching you with a worried, angry look."
+  }
+];
+
+// --- Helper Functions ---
+const getGameCollectionPath = () => `/artifacts/${appId}/public/data/games`;
+const getGameDocPath = (gameId: string) => `${getGameCollectionPath()}/${gameId}`;
+const getMessagesColPath = (gameId: string) => `${getGameDocPath(gameId)}/messages`;
+
+// --- Components ---
+
+const StatBar = ({ label, value, icon: Icon, color }: { label: string, value: number, icon: any, color: string }) => (
+  <div className="flex items-center gap-2 mb-1">
+    <Icon size={14} className="text-slate-400" />
+    <div className="text-xs font-bold text-slate-300 w-16">{label}</div>
+    <div className="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden border border-slate-700">
+      <div 
+        className={`h-full ${color} transition-all duration-500`} 
+        style={{ width: `${(value / 20) * 100}%` }}
+      ></div>
+    </div>
+    <span className="text-xs text-slate-400 w-4 text-right">{value}</span>
+  </div>
+);
+
+const Snowfall = () => {
+  return (
+    <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden" aria-hidden="true">
+      {[...Array(30)].map((_, i) => (
+        <div
+          key={i}
+          className="absolute text-white opacity-20 animate-fall"
+          style={{
+            left: `${Math.random() * 100}vw`,
+            top: `-20px`,
+            animationDuration: `${Math.random() * 5 + 5}s`,
+            animationDelay: `${Math.random() * 5}s`,
+            fontSize: `${Math.random() * 20 + 10}px`
+          }}
+        >
+          ❄
+        </div>
+      ))}
+    </div>
+  );
+};
+
+// --- Main App Component ---
+export default function HuskyRPG() {
+  const [gameState, setGameState] = useState<GameState>('intro');
+  const [selectedChar, setSelectedChar] = useState<Character | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [inputText, setInputText] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [lastPrompt, setLastPrompt] = useState<string | null>(null);
+  const [gameId, setGameId] = useState<string | null>(null);
+  const [gameData, setGameData] = useState<GameSession | null>(null);
+  const [joinGameId, setJoinGameId] = useState('');
+  const [userId, setUserId] = useState<string | null>(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [playerRole, setPlayerRole] = useState<'host' | 'player' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  // --- 1. Firebase Auth Effect ---
+  useEffect(() => {
+    if (!auth) {
+      setError("Firebase is not initialized. Check config.");
+      return;
+    }
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        setUserId(user.uid);
+        setIsAuthReady(true);
+      } else if (initialAuthToken) {
+        try {
+          await signInWithCustomToken(auth, initialAuthToken);
+        } catch (err) {
+          console.error("Custom token sign-in failed, falling back to anonymous", err);
+          await signInAnonymously(auth);
+        }
+      } else {
+        await signInAnonymously(auth);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // --- 2. Game State & Message Listener Effects ---
+  
+  // Game Document Listener (Players, Host)
+  useEffect(() => {
+    if (!isAuthReady || !db || !gameId) return;
+
+    const gameDocRef = doc(db, getGameDocPath(gameId));
+    const unsubscribe = onSnapshot(gameDocRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data() as GameSession;
+        setGameData(data);
+        
+        // Check if I have selected a character
+        const myPlayerEntry = data.players.find(p => p.userId === userId);
+        if (myPlayerEntry) {
+          const char = CHARACTERS.find(c => c.name === myPlayerEntry.charName) || null;
+          setSelectedChar(char);
+          setGameState('playing');
+        } else if (gameState !== 'selection') {
+          // I'm in the game, but haven't picked a char yet
+          setGameState('selection');
+        }
+      } else {
+        setError(`Game ${gameId} does not exist.`);
+        setGameId(null);
+        setGameState('lobby');
+      }
+    });
+
+    return () => unsubscribe();
+  }, [isAuthReady, db, gameId, userId, gameState]);
+
+  // Messages Sub-collection Listener (Chat)
+  useEffect(() => {
+    if (!isAuthReady || !db || !gameId || !gameData) return;
+
+    const messagesColRef = collection(db, getMessagesColPath(gameId));
+    const q = query(messagesColRef, orderBy('timestamp', 'asc'));
+
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      const newMessages: Message[] = [];
+      querySnapshot.forEach((doc) => {
+        newMessages.push({ id: doc.id, ...doc.data() } as Message);
+      });
+      
+      const oldMessageCount = messages.length;
+      setMessages(newMessages);
+
+      // --- This is the Core AI "Host" Logic ---
+      if (newMessages.length > oldMessageCount) {
+        const lastMessage = newMessages[newMessages.length - 1];
+        
+        // If the new message was from a user AND I am the host, I run the AI
+        if (lastMessage && lastMessage.role === 'user' && playerRole === 'host' && !isLoading) {
+          // Check if the AI has already responded to this message ID
+          const aiResponseExists = newMessages.some(m => m.role === 'model' && m.text.includes(lastMessage.id));
+
+          if (!aiResponseExists) {
+            console.log("Host is triggering AI response...");
+            triggerAIResponse(newMessages, lastMessage.text, gameData.players);
+          }
+        }
+      }
+    });
+
+    return () => unsubscribe();
+  }, [isAuthReady, db, gameId, gameData, playerRole, isLoading, messages.length]); // depends on messages.length to re-run check
+
+  // Scroll to bottom of chat
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+
+  // --- Game Logic ---
+  
+  const handleCreateGame = async () => {
+    if (!db || !userId) return;
+    setIsLoading(true);
+    setError(null);
+    try {
+      const newGame: GameSession = {
+        hostId: userId,
+        players: [],
+        createdAt: serverTimestamp() as Timestamp
+      };
+      const gameCol = collection(db, getGameCollectionPath());
+      const docRef = await addDoc(gameCol, newGame);
+      
+      setGameId(docRef.id);
+      setPlayerRole('host');
+      setGameState('selection');
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message);
+    }
+    setIsLoading(false);
+  };
+
+  const handleJoinGame = async () => {
+    if (!db || !joinGameId.trim()) {
+      setError("Please enter a Game ID.");
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    try {
+      const gameDocRef = doc(db, getGameDocPath(joinGameId.trim()));
+      const gameSnap = await getDoc(gameDocRef);
+      
+      if (gameSnap.exists()) {
+        setGameId(gameSnap.id);
+        setPlayerRole('player');
+        setGameState('selection'); // The listener will pull us into 'playing' if we've already selected
+      } else {
+        setError("Game not found. Check the ID.");
+      }
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message);
+    }
+    setIsLoading(false);
+  };
+
+  const handleSelectChar = async (char: Character) => {
+    if (!db || !userId || !gameId || !gameData) return;
+    
+    // Check if character is already taken
+    if (gameData.players.some(p => p.charName === char.name)) {
+      setError(`${char.name} is already taken in this game.`);
+      return;
+    }
+    
+    setError(null);
+    setIsLoading(true);
+    
+    const newPlayer: Player = { userId, charName: char.name };
+    const updatedPlayers = [...gameData.players, newPlayer];
+
+    const gameDocRef = doc(db, getGameDocPath(gameId));
+    await updateDoc(gameDocRef, {
+      players: updatedPlayers
+    });
+
+    // If this is the first player, trigger the intro message
+    if (updatedPlayers.length === 1 && playerRole === 'host') {
+      const dmInstruction = `INITIATE SESSION.
+      Current Player: ${char.name}.
+      Starting Scene: ${char.startingScene}
+      Task: Narrate the scene to the player. Add atmospheric details (smells, sounds, feelings).
+      Tone: Exciting, warm, immersive.
+      End with: "What do you do?"`;
+      
+      await addMessageToDb('system', `Welcome, ${char.name}. The spirits of the Moonshine River Pack are watching...`);
+      await triggerAIResponse([], dmInstruction, updatedPlayers);
+    } else {
+      // Announce the new player
+      await addMessageToDb('system', `${char.name} has joined the game!`);
+    }
+
+    setSelectedChar(char);
+    setGameState('playing');
+    setIsLoading(false);
+  };
+  
+  const addMessageToDb = async (role: 'user' | 'model' | 'system', text: string, isRoll = false) => {
+    if (!db || !gameId) return;
+    
+    let authorName = 'DM';
+    if (role === 'system') authorName = 'System';
+    else if (role === 'user' && selectedChar) authorName = selectedChar.name;
+    else if (role === 'user' && !selectedChar) authorName = 'Spectator';
+
+    try {
+      const messagesColRef = collection(db, getMessagesColPath(gameId));
+      await addDoc(messagesColRef, {
+        role,
+        text,
+        author: authorName,
+        isRoll,
+        timestamp: serverTimestamp()
+      });
+    } catch (err: any) {
+      console.error("Failed to add message:", err);
+      setError(err.message);
+    }
+  };
+  
+  const handleSend = async () => {
+    if (!inputText.trim()) return;
+    
+    const userText = inputText;
+    setInputText('');
+    await addMessageToDb('user', userText);
+  };
+  
+  const handleRoll = async () => {
+    const result = Math.floor(Math.random() * 20) + 1;
+    let outcome = "Failure";
+    if (result > 15) outcome = "Critical Success!";
+    else if (result > 10) outcome = "Success";
+    else if (result === 1) outcome = "Critical Fail!";
+    
+    const rollText = `*Rolls D20... Result: ${result}* (${outcome})`;
+    await addMessageToDb('user', rollText, true);
+  };
+  
+  const retryLastAction = async () => {
+     if (lastPrompt && playerRole === 'host' && gameData) {
+      setError(null);
+      // Re-trigger the AI with the last known prompt
+      await triggerAIResponse(messages, lastPrompt, gameData.players);
+    }
+  };
+
+  // This is the "Host-Only" function
+  const triggerAIResponse = async (history: Message[], prompt: string, players: Player[]) => {
+    setIsLoading(true);
+    setLastPrompt(prompt);
+    
+    const apiKey = ""; // Automatically injected in Canvas
+
+    // Build the multiplayer-aware lore context
+    let allPlayerLore = players.map(p => {
+      const char = CHARACTERS.find(c => c.name === p.charName);
+      return char ? char.loreContext : `${p.charName} (Unknown Lore)`;
+    }).join("\n");
+
+    const systemInstructionText = `
+      You are the Dungeon Master for a text-based RPG called "Husky's Snow".
+      
+      WORLD LORE (MUST FOLLOW):
+      - Pack: Moonshine River Pack.
+      - Leader: Starwhirl (Black coat, white star).
+      - Healer: Sweetbrush (Border Collie).
+      - Crafter Mentor: Snapper (Shiver's father).
+      - Villains/Rivals: Storm (Mean brother), Dragonfly (Oak's overly protective mother).
+      - Spirits: Lunaprie (Moon), Soliendron (Sun), Aerwinden (Wind), Aus/Orient (Dawn).
+      
+      YOUR PLAYER CHARACTERS:
+      ${allPlayerLore}
+      
+      DM RULES:
+      1. WRITE IN THE SECOND PERSON ("You all see...", "Shiver, you feel..."). Narrate for the whole group.
+      2. Be a supportive, fun narrator.
+      3. Keep responses concise (2-3 paragraphs max).
+      4. If a player rolls a die, interpret the result: 1=Critical Fail, 20=Critical Success.
+      5. ALWAYS end your response by asking the group: "What do you do?"
+    `;
+
+    try {
+      const contents = history
+        .filter(m => m.role !== 'system' && m.role !== 'error' && m.text.trim() !== '')
+        .map(m => ({
+          role: m.role === 'user' ? 'user' : 'model',
+          parts: [{ text: `(${m.author}): ${m.text}` }] // Prepend author for context
+        }));
+
+      contents.push({
+        role: 'user',
+        parts: [{ text: prompt }]
+      });
+
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: contents,
+            systemInstruction: { parts: [{ text: systemInstructionText }] },
+            safetySettings: [
+              { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_ONLY_HIGH" },
+              { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_ONLY_HIGH" },
+              { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_ONLY_HIGH" },
+              { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_ONLY_HIGH" }
+            ],
+            generationConfig: { maxOutputTokens: 600, temperature: 1.0 }
+          })
+        }
+      );
+
+      const data = await response.json();
+      
+      if (data.error) {
+        throw new Error(data.error.message || 'API Error');
+      }
+
+      const candidate = data.candidates?.[0];
+      const aiText = candidate?.content?.parts?.[0]?.text;
+
+      if (!aiText) {
+         if (candidate?.finishReason) {
+             throw new Error(`The spirits blocked this action (${candidate.finishReason}). Try doing something else.`);
+         }
+         throw new Error('The spirits are silent (No text returned). Please try again.');
+      }
+      
+      // Write the AI's response back to the shared database
+      await addMessageToDb('model', aiText);
+    } catch (error: any) {
+      console.error("Fetch Error:", error);
+      const errorMessage = error.message || "Connection lost.";
+      // Write the error to the DB for all to see
+      await addMessageToDb('error', `⚠️ ${errorMessage}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const resetGame = () => {
+    // In multiplayer, reset just takes you to the lobby
+    setGameState('lobby');
+    setMessages([]);
+    setSelectedChar(null);
+    setLastPrompt(null);
+    setGameId(null);
+    setGameData(null);
+    setPlayerRole(null);
+    setError(null);
+  }
+  
+  const copyToClipboard = (text: string) => {
+    try {
+      const el = document.createElement('textarea');
+      el.value = text;
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      document.body.removeChild(el);
+    } catch (e) {
+      console.error("Copy to clipboard failed", e);
+    }
+  };
+
+  // --- Render Screens ---
+
+  if (gameState === 'intro' || !isAuthReady) {
+    return (
+      <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col items-center justify-center p-4 relative overflow-hidden font-sans">
+        <Snowfall />
+        <div className="z-10 max-w-3xl w-full bg-slate-800/90 backdrop-blur-md p-8 rounded-2xl border border-slate-700 shadow-2xl text-center">
+          <div className="mb-4 flex justify-center">
+            <Snowflake size={64} className="text-cyan-300 animate-spin-slow" />
+          </div>
+          <h1 className="text-5xl md:text-7xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-indigo-300 via-cyan-400 to-blue-500 mb-4 drop-shadow-lg">
+            HUSKY'S SNOW
+          </h1>
+          <p className="text-xl text-slate-300 mb-8 tracking-widest uppercase font-light flex items-center justify-center gap-2">
+            <Mountain size={20} /> Tales of the Moonshine River Pack <Mountain size={20} />
+          </p>
+          
+          {!isAuthReady ? (
+            <div className="flex items-center justify-center gap-3 bg-slate-900/60 p-6 rounded-xl border border-slate-700 shadow-inner">
+               <div className="w-5 h-5 border-t-2 border-cyan-400 rounded-full animate-spin"></div>
+               <span className="text-lg text-slate-200">Connecting to the Pack...</span>
+            </div>
+          ) : (
+             <button 
+                onClick={() => setGameState('lobby')}
+                className="w-full py-5 bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-500 hover:to-cyan-500 text-white font-bold rounded-xl shadow-lg transform transition hover:scale-[1.02] text-xl flex items-center justify-center gap-3 ring-2 ring-white/10"
+              >
+                <Users size={24} /> Start Multiplayer
+              </button>
+          )}
+          
+          {error && <p className="text-red-400 mt-4">{error}</p>}
+        </div>
+      </div>
+    );
+  }
+  
+  if (gameState === 'lobby') {
+    return (
+      <div className="min-h-screen bg-slate-900 text-slate-100 flex items-center justify-center p-4 relative overflow-hidden font-sans">
+        <Snowfall />
+        <div className="z-10 max-w-md w-full bg-slate-800/90 backdrop-blur-md p-8 rounded-2xl border border-slate-700 shadow-2xl">
+          <h2 className="text-3xl font-bold text-center mb-6 text-cyan-100">Game Lobby</h2>
+          {error && <p className="text-red-400 mb-4 text-center bg-red-900/50 p-3 rounded-lg border border-red-700">{error}</p>}
+          
+          <div className="mb-6">
+            <button
+              onClick={handleCreateGame}
+              disabled={isLoading}
+              className="w-full py-4 bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white font-bold rounded-xl shadow-lg transform transition hover:scale-[1.02] text-lg flex items-center justify-center gap-3"
+            >
+              <PlusSquare size={20} /> Create New Game
+            </button>
+          </div>
+
+          <div className="relative flex items-center justify-center mb-6">
+            <span className="h-px bg-slate-700 flex-1"></span>
+            <span className="mx-4 text-slate-500 uppercase text-xs font-bold">Or</span>
+            <span className="h-px bg-slate-700 flex-1"></span>
+          </div>
+
+          <div>
+             <label className="block text-sm font-medium text-slate-300 mb-2">Join Existing Game</label>
+             <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={joinGameId}
+                  onChange={(e) => setJoinGameId(e.target.value)}
+                  placeholder="Paste Game ID..."
+                  className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all placeholder-slate-600"
+                />
+                <button
+                  onClick={handleJoinGame}
+                  disabled={isLoading}
+                  className="p-3 bg-gradient-to-r from-cyan-600 to-blue-600 text-white rounded-xl hover:from-cyan-500 hover:to-blue-500 disabled:opacity-50"
+                  title="Join Game"
+                >
+                  <LogIn size={24} />
+                </button>
+             </div>
+          </div>
+
+        </div>
+      </div>
+    );
+  }
+
+  if (gameState === 'selection') {
+    return (
+      <div className="min-h-screen bg-slate-900 text-slate-100 p-4 md:p-8 overflow-y-auto">
+        <Snowfall />
+        <div className="max-w-7xl mx-auto relative z-10">
+          
+          <div className="mb-8 p-4 bg-slate-800/90 rounded-2xl border border-slate-700 max-w-3xl mx-auto text-center">
+            <label className="text-sm text-cyan-400">Share this Game ID with your friends:</label>
+            <div className="flex gap-2 mt-2">
+              <input 
+                type="text"
+                readOnly
+                value={gameId || '...'}
+                className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-4 py-2 text-slate-200 focus:outline-none font-mono text-center"
+              />
+              <button
+                onClick={() => copyToClipboard(gameId || '')}
+                className="p-3 bg-slate-700 hover:bg-slate-600 text-white rounded-xl"
+                title="Copy ID"
+              >
+                <Clipboard size={20} />
+              </button>
+            </div>
+          </div>
+          
+          <h2 className="text-4xl font-bold text-center mb-2 text-cyan-100">Choose Your Pup</h2>
+          <p className="text-center text-slate-400 mb-4">Your friends in this game: {gameData?.players.map(p => p.charName).join(', ') || 'Just you so far'}</p>
+          {error && <p className="text-red-400 mb-4 text-center bg-red-900/50 p-3 rounded-lg border border-red-700 max-w-md mx-auto">{error}</p>}
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mt-6">
+            {CHARACTERS.map(char => {
+              const isTaken = gameData?.players.some(p => p.charName === char.name);
+              return (
+                <div 
+                  key={char.id}
+                  onClick={() => !isTaken && !isLoading && handleSelectChar(char)}
+                  className={`
+                    group bg-slate-800/90 backdrop-blur-md border border-slate-700 rounded-2xl overflow-hidden transition-all duration-300 flex flex-col h-full
+                    ${isTaken 
+                      ? 'opacity-50 cursor-not-allowed' 
+                      : 'hover:border-cyan-400 cursor-pointer hover:shadow-2xl hover:shadow-cyan-500/20 transform hover:-translate-y-2'}
+                  `}
+                >
+                  <div className={`h-40 ${char.color} relative flex items-center justify-center overflow-hidden`}>
+                    <div className="absolute inset-0 bg-black/20 group-hover:bg-black/10 transition-colors"></div>
+                    <char.icon size={80} className="text-white/90 transform group-hover:scale-110 transition-transform duration-500 drop-shadow-md" />
+                    {isTaken && (
+                      <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                        <span className="text-white font-bold text-lg uppercase tracking-wider border-2 border-red-400 text-red-400 px-4 py-2 rounded-lg rotate-[-10deg]">TAKEN</span>
+                      </div>
+                    )}
+                  </div>
+                  
+                  <div className="p-6 flex-1 flex flex-col">
+                    <h3 className="text-2xl font-bold text-white mb-1">{char.name}</h3>
+                    <p className="text-cyan-400 text-xs font-bold mb-4 uppercase tracking-wider flex items-center gap-1">
+                      <Sparkles size={10} /> {char.role}
+                    </p>
+                    <p className="text-slate-300 text-sm mb-6 leading-relaxed flex-1">{char.description}</p>
+                    
+                    <div className="space-y-3 mt-auto bg-slate-900/50 p-4 rounded-lg border border-slate-700/50">
+                      <StatBar label="STR" value={char.stats.strength} icon={Shield} color="bg-rose-500" />
+                      <StatBar label="AGI" value={char.stats.agility} icon={Zap} color="bg-amber-500" />
+                      <StatBar label="INT" value={char.stats.smart} icon={Brain} color="bg-blue-500" />
+                      <StatBar label="SPR" value={char.stats.spirit} icon={Sparkles} color="bg-violet-500" />
+                    </div>
+
+                    <div className="mt-4 pt-4 border-t border-slate-700 flex justify-between items-center">
+                      <span className="text-xs text-slate-500 uppercase tracking-wide">Special Ability</span>
+                      <span className="text-xs font-bold text-cyan-300 bg-cyan-900/30 px-2 py-1 rounded border border-cyan-500/30">{char.ability}</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          
+          <button 
+            onClick={() => { setGameId(null); setGameState('lobby'); }}
+            className="mt-12 mx-auto flex items-center gap-2 text-slate-500 hover:text-white transition-colors px-6 py-2 rounded-full hover:bg-slate-800"
+          >
+            ← Leave Game
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Playing State
+  return (
+    <div className="flex flex-col h-screen bg-slate-950 text-slate-100 overflow-hidden font-sans selection:bg-cyan-500/30">
+      <Snowfall />
+      
+      {/* Header */}
+      <header className="h-16 bg-slate-900/90 backdrop-blur border-b border-slate-800 flex items-center justify-between px-4 md:px-6 z-20 shadow-lg">
+        <div className="flex items-center gap-3">
+           <div className={`w-10 h-10 rounded-full ${selectedChar?.color} flex items-center justify-center text-white shadow-lg ring-2 ring-slate-800`}>
+             {selectedChar ? <selectedChar.icon size={20} /> : <User size={20} />}
+           </div>
+           <div>
+             <h1 className="font-bold text-lg leading-tight text-white">{selectedChar?.name || 'Spectator'}</h1>
+             <div className="flex items-center gap-2">
+               <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+               <p className="text-xs text-cyan-400 uppercase tracking-wide">{selectedChar?.role || 'Observing'}</p>
+             </div>
+           </div>
+        </div>
+        
+        <div className="flex items-center gap-2 md:gap-4">
+          <button 
+            onClick={resetGame} 
+            className="p-2 hover:bg-slate-800 rounded-full text-slate-400 hover:text-white transition-colors"
+            title="Leave Game"
+          >
+            <LogIn size={18} className="rotate-180" />
+          </button>
+          <div className="hidden md:flex items-center gap-4 text-sm text-slate-400">
+            <div 
+              className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 rounded-full border border-slate-700 shadow-sm cursor-pointer"
+              title={gameData?.players.map(p => p.charName).join(', ')}
+            >
+              <Users size={14} className="text-cyan-400" /> {gameData?.players.length || 0} Players
+            </div>
+            <div 
+              className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 rounded-full border border-slate-700 shadow-sm cursor-pointer"
+              title={`Click to copy Game ID: ${gameId}`}
+              onClick={() => copyToClipboard(gameId || '')}
+            >
+              <MapIcon size={14} className="text-emerald-400" /> {gameId}
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Main Chat Area */}
+      <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 scroll-smooth relative z-10 custom-scrollbar">
+        {messages.map((msg) => {
+          const isMyMessage = msg.role === 'user' && msg.author === selectedChar?.name;
+          
+          return (
+            <div 
+              key={msg.id} 
+              className={`flex ${isMyMessage ? 'justify-end' : 'justify-start'} animate-fade-in-up`}
+            >
+              <div 
+                className={`
+                  max-w-[90%] md:max-w-[75%] lg:max-w-[60%] p-5 rounded-2xl shadow-lg leading-relaxed text-base
+                  ${isMyMessage
+                    ? 'bg-gradient-to-br from-indigo-600 to-blue-700 text-white rounded-tr-none border border-indigo-500/30' 
+                    : msg.role === 'system'
+                      ? 'bg-slate-800/80 border border-slate-700 text-yellow-200 text-center w-full max-w-2xl mx-auto italic text-sm'
+                      : msg.role === 'error'
+                        ? 'bg-red-900/50 border border-red-700 text-red-200'
+                        : msg.role === 'user'
+                          ? 'bg-slate-700/80 text-slate-200 border border-slate-600 rounded-tl-none' // Other user's message
+                          : 'bg-slate-800/95 text-slate-200 border border-slate-700 rounded-tl-none shadow-xl' // DM Message
+                  }
+                  ${msg.isRoll ? 'font-mono text-yellow-300 border-yellow-600/50 border bg-slate-900/90' : ''}
+                `}
+              >
+                {/* Author Tag for DM and Other Players */}
+                {msg.role === 'model' && (
+                  <div className="flex items-center gap-2 mb-3 pb-2 border-b border-slate-700/50 text-xs font-bold text-cyan-400 uppercase tracking-wider">
+                    <Feather size={12} /> Dungeon Master
+                  </div>
+                )}
+                {msg.role === 'user' && !isMyMessage && (
+                  <div className="flex items-center gap-2 mb-3 pb-2 border-b border-slate-600/50 text-xs font-bold text-amber-400 uppercase tracking-wider">
+                    <User size={12} /> {msg.author || 'Unknown Pup'}
+                  </div>
+                )}
+                {msg.role === 'error' && (
+                   <div className="flex items-center gap-2 mb-2 text-xs font-bold text-red-400 uppercase tracking-wider">
+                     <AlertTriangle size={12} /> Error
+                   </div>
+                )}
+                
+                <div className="whitespace-pre-wrap">{msg.text}</div>
+                
+                {msg.role === 'error' && playerRole === 'host' && (
+                  <button 
+                    onClick={retryLastAction}
+                    className="mt-4 flex items-center gap-2 px-4 py-2 bg-red-800/50 hover:bg-red-700/50 rounded-lg text-sm font-bold text-white transition-colors border border-red-500/30"
+                  >
+                    <RotateCcw size={14} /> (Host) Retry Last Action
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+        
+        {isLoading && playerRole === 'host' && (
+          <div className="flex justify-start animate-pulse">
+            <div className="bg-slate-800 p-4 rounded-2xl rounded-tl-none border border-slate-700 flex items-center gap-2 shadow-lg">
+              <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce"></div>
+              <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce delay-100"></div>
+              <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce delay-200"></div>
+            </div>
+          </div>
+        )}
+        <div ref={chatEndRef} />
+      </div>
+
+      {/* Input Area */}
+      <div className="bg-slate-900 border-t border-slate-800 p-4 z-20 shadow-[0_-5px_20px_rgba(0,0,0,0.3)]">
+        {selectedChar ? (
+          <>
+            <div className="max-w-4xl mx-auto flex gap-3">
+              <button 
+                onClick={handleRoll}
+                disabled={isLoading}
+                className="p-3 bg-slate-800 text-yellow-500 rounded-xl border border-slate-700 hover:bg-slate-700 hover:border-yellow-500 hover:text-yellow-400 transition-all shadow-md group relative"
+                title="Roll D20"
+              >
+                <div className="absolute -top-10 left-1/2 transform -translate-x-1/2 bg-black/80 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                  Roll D20
+                </div>
+                <Dice5 size={24} className="group-hover:rotate-180 transition-transform duration-500" />
+              </button>
+              
+              <input 
+                type="text" 
+                className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-4 text-slate-200 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all placeholder-slate-600"
+                placeholder="What do you want to do?"
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+                disabled={isLoading}
+                autoFocus
+              />
+              
+              <button 
+                onClick={handleSend}
+                disabled={isLoading || !inputText.trim()}
+                className="p-3 bg-gradient-to-br from-cyan-600 to-blue-600 text-white rounded-xl hover:from-cyan-500 hover:to-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg shadow-cyan-500/20 active:scale-95"
+              >
+                <Send size={24} />
+              </button>
+            </div>
+            <div className="text-center mt-3 text-xs text-slate-600 flex items-center justify-center gap-2">
+              <Sparkles size={10} /> {playerRole === 'host' ? "You are the Host (AI Controller)" : "You are a Player"}
+            </div>
+          </>
+        ) : (
+          <div className="text-center text-slate-400">Please go back to the 'Selection' screen to pick a character.</div>
+        )}
+      </div>
+    </div>
+  );
+}
