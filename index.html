@@ -319,7 +319,7 @@
           
           try {
               const result = await ai.models.generateContent({
-                model: 'gemini-2.5-pro',
+                model: 'gemini-2.5-flash',
                 contents: contents,
                 config: {
                   systemInstruction: systemInstructionText,
@@ -363,6 +363,9 @@
               return { narrative, suggestions: suggestionLines };
 
           } catch (error) {
+              if (error.toString().includes('429') || error.toString().includes('RESOURCE_EXHAUSTED')) {
+                throw new Error("You've reached the daily request limit for the AI on the free plan. The story must pause until tomorrow. For unlimited access, please check your Gemini API plan and billing details.");
+              }
               throw error;
           }
       };
