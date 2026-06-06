@@ -57,10 +57,22 @@ const createLocalGameId = () => `local-${crypto.randomUUID()}`;
 
 const uniqueIds = (ids: string[]) => Array.from(new Set(ids.filter(Boolean)));
 
+const timestampToMillis = (value: Message['timestamp'] | GameSession['lastActiveAt']) => {
+  if (!value) return 0;
+  if (typeof value.toMillis === 'function') return value.toMillis();
+
+  const serializedTimestamp = value as unknown as { seconds?: number; nanoseconds?: number };
+  if (typeof serializedTimestamp.seconds === 'number') {
+    return (serializedTimestamp.seconds * 1000) + Math.floor((serializedTimestamp.nanoseconds || 0) / 1_000_000);
+  }
+
+  return 0;
+};
+
 const sortMessages = (items: Message[]) => {
   return [...items].sort((a, b) => {
-    const aMs = typeof a.timestamp?.toMillis === 'function' ? a.timestamp.toMillis() : 0;
-    const bMs = typeof b.timestamp?.toMillis === 'function' ? b.timestamp.toMillis() : 0;
+    const aMs = timestampToMillis(a.timestamp);
+    const bMs = timestampToMillis(b.timestamp);
     return aMs - bMs;
   });
 };
@@ -628,6 +640,20 @@ export default function App() {
     setGameState(gameData?.players.some((p) => p.userId === user?.uid) ? 'playing' : 'selection');
   };
 
+  const handleStartFreshLobby = () => {
+    localStorage.removeItem(GAME_ID_KEY);
+    localStorage.removeItem(STORAGE_MODE_KEY);
+    setStorageMode('firestore');
+    setGameId(null);
+    setGameData(null);
+    setMessages([]);
+    setSuggestions([]);
+    setError(null);
+    setLastPrompt(null);
+    setGameState('lobby');
+    setLocalVersion((version) => version + 1);
+  };
+
   const localModeNotice = storageMode === 'local'
     ? "Local browser mode: Firestore could not save this session, so it only works in this browser and cannot sync across devices."
     : null;
@@ -636,7 +662,7 @@ export default function App() {
   if (gameState === 'intro') {
     return (
       <IntroScreen
-        onEnterLobby={() => setGameState('lobby')}
+        onEnterLobby={handleStartFreshLobby}
         onContinueAdventure={handleContinueAdventure}
         hasSavedGame={Boolean(gameId)}
         isAuthReady={isAuthReady}
