@@ -4,10 +4,17 @@ import { Snowflake, Mountain, Users } from './icons';
 
 interface IntroScreenProps {
   onEnterLobby: () => void;
+  onContinueAdventure: () => void;
+  hasSavedGame: boolean;
   isAuthReady: boolean;
 }
 
-const IntroScreen: React.FC<IntroScreenProps> = ({ onEnterLobby, isAuthReady }) => {
+const IntroScreen: React.FC<IntroScreenProps> = ({
+  onEnterLobby,
+  onContinueAdventure,
+  hasSavedGame,
+  isAuthReady
+}) => {
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col items-center justify-center p-4 relative overflow-hidden font-sans">
       <Snowfall />
@@ -22,13 +29,25 @@ const IntroScreen: React.FC<IntroScreenProps> = ({ onEnterLobby, isAuthReady }) 
           <Mountain size={20} /> A Multiplayer Adventure <Mountain size={20} />
         </p>
         
-        <button 
-           onClick={onEnterLobby}
-           disabled={!isAuthReady}
-           className="w-full py-5 bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-500 hover:to-cyan-500 text-white font-bold rounded-xl shadow-lg transform transition hover:scale-[1.02] text-xl flex items-center justify-center gap-3 ring-2 ring-white/10 disabled:opacity-50 disabled:cursor-wait"
-         >
-           {isAuthReady ? <><Users size={24} /> Enter Lobby</> : 'Connecting...'}
-         </button>
+        <div className="grid gap-3">
+          {hasSavedGame && (
+            <button
+              onClick={onContinueAdventure}
+              disabled={!isAuthReady}
+              className="w-full py-5 bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white font-bold rounded-xl shadow-lg transform transition hover:scale-[1.02] text-xl flex items-center justify-center gap-3 ring-2 ring-white/10 disabled:opacity-50 disabled:cursor-wait"
+            >
+              {isAuthReady ? <><Users size={24} /> Continue Adventure</> : 'Connecting...'}
+            </button>
+          )}
+
+          <button
+             onClick={onEnterLobby}
+             disabled={!isAuthReady}
+             className="w-full py-4 bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-500 hover:to-cyan-500 text-white font-bold rounded-xl shadow-lg transform transition hover:scale-[1.02] text-lg flex items-center justify-center gap-3 ring-2 ring-white/10 disabled:opacity-50 disabled:cursor-wait"
+           >
+             {isAuthReady ? <><Users size={22} /> {hasSavedGame ? 'New or Join Game' : 'Enter Lobby'}</> : 'Connecting...'}
+           </button>
+        </div>
       </div>
     </div>
   );

@@ -40,9 +40,9 @@ export const ActionBar: React.FC<ActionBarProps> = ({
   // If no AI suggestions, provide fallback context actions based on character role
   // (In a real scenario, we might want consistent buttons + dynamic ones, but for now dynamic is primary)
   const actionsToShow = suggestions.length > 0 ? suggestions : [
-    "Look around carefully.",
-    "Check my inventory.",
-    "Sniff the air for danger."
+    "Follow Mist's whisper.",
+    "Check the riverbank for clues.",
+    "Ask the pack what they noticed."
   ];
 
   return (
@@ -74,9 +74,11 @@ export const ActionBar: React.FC<ActionBarProps> = ({
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          const input = (e.target as any).customAction.value;
+          const form = e.currentTarget;
+          const formData = new FormData(form);
+          const input = String(formData.get('customAction') || '');
           if(input.trim()) onAction(input);
-          (e.target as any).reset();
+          form.reset();
         }}
         className="w-full mt-2"
       >

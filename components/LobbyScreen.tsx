@@ -8,9 +8,10 @@ interface LobbyScreenProps {
   onJoinGame: (gameId: string) => void;
   isLoading: boolean;
   error: string | null;
+  modeNotice?: string | null;
 }
 
-const LobbyScreen: React.FC<LobbyScreenProps> = ({ onCreateGame, onJoinGame, isLoading, error }) => {
+const LobbyScreen: React.FC<LobbyScreenProps> = ({ onCreateGame, onJoinGame, isLoading, error, modeNotice }) => {
   const [joinGameId, setJoinGameId] = useState('');
 
   return (
@@ -19,6 +20,7 @@ const LobbyScreen: React.FC<LobbyScreenProps> = ({ onCreateGame, onJoinGame, isL
       <div className="z-10 max-w-md w-full bg-slate-800/90 backdrop-blur-md p-8 rounded-2xl border border-slate-700 shadow-2xl">
         <h2 className="text-3xl font-bold text-center mb-6 text-cyan-100">Game Lobby</h2>
         {error && <p className="text-red-400 mb-4 text-center bg-red-900/50 p-3 rounded-lg border border-red-700">{error}</p>}
+        {modeNotice && <p className="text-amber-200 mb-4 text-sm bg-amber-950/60 p-3 rounded-lg border border-amber-700/60">{modeNotice}</p>}
         
         <div className="mb-6">
           <button

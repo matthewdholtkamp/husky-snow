@@ -1,0 +1,83 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isHuskyApp(appId) {
+      return appId == 'husky-snow-rpg-data';
+    }
+
+    function safeGameKeys() {
+      return request.resource.data.keys().hasOnly([
+        'hostId',
+        'players',
+        'playerIds',
+        'createdAt',
+        'lastActiveAt',
+        'status',
+        'inventory',
+        'badges'
+      ]);
+    }
+
+    function safeMessageKeys() {
+      return request.resource.data.keys().hasOnly([
+        'role',
+        'text',
+        'author',
+        'userId',
+        'isRoll',
+        'rollOutcome',
+        'timestamp'
+      ]);
+    }
+
+    match /artifacts/{appId}/public/data/games/{gameId} {
+      allow read: if signedIn() && isHuskyApp(appId);
+
+      allow create: if signedIn()
+        && isHuskyApp(appId)
+        && safeGameKeys()
+        && request.resource.data.hostId == request.auth.uid
+        && request.resource.data.playerIds == [request.auth.uid]
+        && request.resource.data.players is list
+        && request.resource.data.inventory is map
+        && request.resource.data.badges is map;
+
+      allow update: if signedIn()
+        && isHuskyApp(appId)
+        && safeGameKeys()
+        && request.resource.data.hostId == resource.data.hostId
+        && (
+          request.auth.uid == resource.data.hostId ||
+          request.auth.uid in resource.data.playerIds ||
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['players', 'playerIds', 'lastActiveAt'])
+        );
+
+      allow delete: if signedIn()
+        && isHuskyApp(appId)
+        && request.auth.uid == resource.data.hostId;
+
+      match /messages/{messageId} {
+        allow read: if signedIn() && isHuskyApp(appId);
+
+        allow create: if signedIn()
+          && isHuskyApp(appId)
+          && safeMessageKeys()
+          && request.resource.data.userId == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.text.size() <= 4000
+          && request.resource.data.role in ['user', 'model', 'system', 'error']
+          && (
+            request.resource.data.role == 'user' ||
+            get(/databases/$(database)/documents/artifacts/$(appId)/public/data/games/$(gameId)).data.hostId == request.auth.uid
+          );
+
+        allow update, delete: if false;
+      }
+    }
+  }
+}

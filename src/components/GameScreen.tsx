@@ -24,6 +24,7 @@ interface GameScreenProps {
   gameId: string | null;
   players: Player[];
   playerRole: 'host' | 'player' | 'spectator';
+  modeNotice?: string | null;
 }
 
 export default function GameScreen({
@@ -37,7 +38,8 @@ export default function GameScreen({
   onRetry,
   gameId,
   players,
-  playerRole
+  playerRole,
+  modeNotice
 }: GameScreenProps) {
 
   // Local State
@@ -60,12 +62,7 @@ export default function GameScreen({
   // --- Action Handlers ---
 
   const handleAction = async (actionText: string) => {
-    // 1. Send User Action
     await onSendMessage(actionText);
-
-    // 2. AI triggers are handled by the Host in App.tsx generally,
-    // but here we might need to intercept commands if we were moving logic here.
-    // For now, App.tsx handles the AI call. We just wait.
   };
 
   const handleRollComplete = async (result: number) => {
@@ -95,44 +92,29 @@ export default function GameScreen({
   const canRoll = playerRole !== 'spectator' && !isThinking;
   const aiRequestedRoll = messages.length > 0 && messages[messages.length - 1].text.includes("Roll the D20");
 
-  // Check last message for "Roll the D20" command from AI
-  useEffect(() => {
-    if (messages.length === 0) return;
-    const lastMsg = messages[messages.length - 1];
-    if (lastMsg.role === 'model' && lastMsg.text.includes('Roll the D20')) {
-       // Only the active player should see the roll prompt if it's their turn,
-       // but in this coop simplified version, we just show a "Roll" button or auto-trigger?
-       // Better: The User sees a "Roll Dice" button in the Action Bar if the AI asked for it?
-       // For now, let's just let the user click the "Roll" suggestion which usually appears.
-    }
-  }, [messages]);
-
-  // Extract specific AI commands (Host Only execution usually, but we need to update DB)
-  // Since App.tsx calls generateAIResponse, we need to ensure IT parses commands.
-  // Wait, App.tsx is currently using the OLD generateAIResponse.
-  // I need to update App.tsx to use the NEW generateAIResponse and handle the commands.
-  // But for now, let's focus on the UI rendering.
-
   return (
     <div className="relative w-full h-screen overflow-hidden font-sans text-slate-200">
       <BackgroundLayer scene="default" />
 
       <ScreenShake trigger={shakeTrigger}>
-        <div className="relative z-10 w-full h-full flex flex-col md:flex-row p-4 gap-4">
+        <div className="relative z-10 w-full h-full min-h-0 box-border flex flex-col md:flex-row p-3 md:p-4 gap-3 md:gap-4">
 
           {/* LEFT COLUMN: Character & Stats (Hidden on mobile, drawer optional?) */}
-          <div className="hidden md:flex w-1/4 flex-col gap-4">
+          <div className="hidden md:flex w-1/4 min-h-0 flex-col gap-4">
              <CharacterSheet character={selectedChar} earnedBadges={localBadges} />
              <InventoryGrid items={localInventory} />
           </div>
 
           {/* CENTER: Main Game Area */}
-          <div className="flex-1 flex flex-col gap-4 min-w-0">
+          <div className="flex-1 h-full min-h-0 flex flex-col gap-3 md:gap-4 min-w-0">
              {/* Header */}
-             <div className="flex justify-between items-center bg-black/40 backdrop-blur-md p-3 rounded-xl border border-white/10">
-                <h1 className="text-lg font-serif font-bold text-white tracking-widest">
-                  Husky's Snow <span className="text-slate-400 text-xs font-sans font-normal">| {playerRole.toUpperCase()}</span>
-                </h1>
+             <div className="shrink-0 flex justify-between items-center bg-black/40 backdrop-blur-md p-3 rounded-xl border border-white/10">
+                <div className="min-w-0">
+                  <h1 className="text-lg font-serif font-bold text-white tracking-widest truncate">
+                    Husky's Snow <span className="text-slate-400 text-xs font-sans font-normal">| {playerRole.toUpperCase()}</span>
+                  </h1>
+                  {gameId && <p className="text-[10px] text-slate-500 font-mono truncate">Game {gameId.slice(0, 12)}</p>}
+                </div>
                 <div className="flex gap-2">
                    {playerRole === 'host' && (
                      <button onClick={onRetry} className="p-2 hover:bg-white/10 rounded-full transition-colors" title="Retry AI Response">
@@ -145,11 +127,32 @@ export default function GameScreen({
                 </div>
              </div>
 
+             {modeNotice && (
+               <div className="shrink-0 bg-amber-950/70 border border-amber-700/50 text-amber-100 text-sm rounded-lg px-4 py-3">
+                 {modeNotice}
+               </div>
+             )}
+
+             <div className="shrink-0 md:hidden grid grid-cols-3 gap-2 text-center text-xs">
+               <div className="bg-black/35 border border-white/10 rounded-lg px-3 py-2">
+                 <div className="text-slate-400 uppercase tracking-wider">Pup</div>
+                 <div className="font-bold text-white truncate">{selectedChar.name}</div>
+               </div>
+               <div className="bg-black/35 border border-white/10 rounded-lg px-3 py-2">
+                 <div className="text-slate-400 uppercase tracking-wider">Items</div>
+                 <div className="font-bold text-white">{localInventory.reduce((total, item) => total + item.quantity, 0)}</div>
+               </div>
+               <div className="bg-black/35 border border-white/10 rounded-lg px-3 py-2">
+                 <div className="text-slate-400 uppercase tracking-wider">Badges</div>
+                 <div className="font-bold text-white">{localBadges.length}</div>
+               </div>
+             </div>
+
              {/* Chat / Story Log */}
              <MessageLog messages={messages} />
 
              {/* Action Bar */}
-             <div className="mt-auto">
+             <div className="shrink-0">
                <FrostContainer className="p-4" noBorder>
                   {/* If AI asks for roll, we could inject a special button here or relying on suggestions */}
                   {canRoll ? (

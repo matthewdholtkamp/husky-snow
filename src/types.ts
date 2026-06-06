@@ -10,7 +10,7 @@ export interface Badge {
   type: 'small' | 'medium' | 'large';
   description: string;
   icon?: string; // Could be a lucide icon name or image path
-  earnedAt?: Timestamp;
+  earnedAt?: Timestamp | null;
 }
 
 export interface InventoryItem {
@@ -61,6 +61,7 @@ export type Message = {
   role: 'user' | 'model' | 'system' | 'error';
   text: string;
   author?: string; // Character Name
+  userId?: string;
   isRoll?: boolean;
   rollOutcome?: string; // "Success" | "Failure" | "Critical Success" etc.
   timestamp: Timestamp;
@@ -71,7 +72,10 @@ export type GameSession = {
   id: string;
   hostId: string;
   players: Player[];
+  playerIds?: string[];
   createdAt: Timestamp;
+  lastActiveAt?: Timestamp;
+  status?: 'active' | 'ended';
   // Game state
   inventory: Record<string, InventoryItem[]>; // map charName -> items
   badges: Record<string, Badge[]>; // map charName -> badges

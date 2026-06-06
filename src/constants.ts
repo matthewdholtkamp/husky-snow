@@ -112,7 +112,7 @@ export const CHARACTERS: Character[] = [
       harnessColor: 'Dark Brown Camo',
       features: ['Missing Back Left Leg', 'White Star on Chest', 'Trap Pouches'],
       badgeSlots: {
-        small: { id: 'init_fish', ...BADGES_REGISTRY['catch_fish'], earnedAt: null } as any,
+        small: { id: 'init_fish', ...BADGES_REGISTRY['catch_fish'], earnedAt: null },
         medium: null,
         large: null
       }

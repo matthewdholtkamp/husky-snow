@@ -12,6 +12,7 @@ interface CharacterSelectionScreenProps {
   error: string | null;
   gameId: string | null;
   playersInGame: Player[];
+  modeNotice?: string | null;
 }
 
 const CharacterSelectionScreen: React.FC<CharacterSelectionScreenProps> = ({
@@ -20,7 +21,8 @@ const CharacterSelectionScreen: React.FC<CharacterSelectionScreenProps> = ({
   isLoading,
   error,
   gameId,
-  playersInGame
+  playersInGame,
+  modeNotice
 }) => {
   const [copied, setCopied] = useState(false);
   const takenCharNames = playersInGame.map(p => p.charName);
@@ -72,6 +74,7 @@ const CharacterSelectionScreen: React.FC<CharacterSelectionScreenProps> = ({
          </button>
 
         {error && <p className="text-red-400 mb-4 text-center bg-red-900/50 p-3 rounded-lg border border-red-700 max-w-md mx-auto">{error}</p>}
+        {modeNotice && <p className="text-amber-200 mb-4 text-center bg-amber-950/60 p-3 rounded-lg border border-amber-700/60 max-w-2xl mx-auto">{modeNotice}</p>}
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mt-6">
           {CHARACTERS.map(char => {

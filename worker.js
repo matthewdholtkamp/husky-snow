@@ -9,6 +9,12 @@ const ALLOWED_ORIGINS = [
 const DEFAULT_MODEL = 'gemini-2.5-pro';
 const DEFAULT_FALLBACK_MODEL = 'gemini-2.5-flash';
 const RETRYABLE_STATUSES = new Set([429, 500, 503]);
+const MAX_REQUEST_BYTES = 200_000;
+const ALLOWED_MODELS = new Set([
+  'gemini-2.5-pro',
+  'gemini-2.5-flash',
+  'gemini-2.5-flash-lite',
+]);
 
 const getCorsHeaders = (request) => {
   const origin = request.headers.get('Origin') || '';
@@ -27,8 +33,10 @@ const jsonResponse = (request, body, status = 200, extraHeaders = {}) => {
     status,
     headers: {
       ...getCorsHeaders(request),
-      ...extraHeaders,
       'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      ...extraHeaders,
     },
   });
 };
@@ -48,7 +56,7 @@ const extractErrorDetail = (text) => {
 };
 
 const callGemini = async (env, model, body) => {
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${env.GEMINI_API_KEY}`;
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${env.GEMINI_API_KEY}`;
   return fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -66,6 +74,16 @@ const handleGenerate = async (request, env) => {
     return jsonResponse(request, { error: 'GEMINI_API_KEY is not configured on the Worker.' }, 500);
   }
 
+  const contentLength = Number(request.headers.get('Content-Length') || '0');
+  if (contentLength > MAX_REQUEST_BYTES) {
+    return jsonResponse(request, { error: 'Request body is too large.' }, 413);
+  }
+
+  const contentType = request.headers.get('Content-Type') || '';
+  if (contentType && !contentType.includes('application/json')) {
+    return jsonResponse(request, { error: 'Content-Type must be application/json.' }, 415);
+  }
+
   let body;
   try {
     body = await request.json();
@@ -79,6 +97,13 @@ const handleGenerate = async (request, env) => {
 
   const primaryModel = body.model || DEFAULT_MODEL;
   const fallbackModel = body.fallbackModel || DEFAULT_FALLBACK_MODEL;
+  if (!ALLOWED_MODELS.has(primaryModel) || !ALLOWED_MODELS.has(fallbackModel)) {
+    return jsonResponse(request, {
+      error: 'Unsupported model requested.',
+      allowedModels: Array.from(ALLOWED_MODELS),
+    }, 400);
+  }
+
   let usedModel = primaryModel;
   let upstream = await callGemini(env, primaryModel, body);
 

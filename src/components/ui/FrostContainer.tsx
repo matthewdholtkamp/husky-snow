@@ -5,12 +5,14 @@ import { twMerge } from 'tailwind-merge';
 interface FrostContainerProps {
   children: React.ReactNode;
   className?: string;
+  contentClassName?: string;
   noBorder?: boolean;
 }
 
 export const FrostContainer: React.FC<FrostContainerProps> = ({
   children,
   className,
+  contentClassName,
   noBorder = false
 }) => {
   return (
@@ -24,7 +26,7 @@ export const FrostContainer: React.FC<FrostContainerProps> = ({
     )}>
       {/* Subtle frost texture overlay could go here */}
       <div className="absolute inset-0 bg-gradient-to-br from-white/5 to-transparent pointer-events-none" />
-      <div className="relative z-10">
+      <div className={twMerge(clsx("relative z-10", contentClassName))}>
         {children}
       </div>
     </div>

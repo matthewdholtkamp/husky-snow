@@ -15,10 +15,14 @@ export const MessageLog: React.FC<MessageLogProps> = ({ messages }) => {
   }, [messages]);
 
   return (
-    <FrostContainer className="flex-1 min-h-0 flex flex-col p-6 overflow-y-auto custom-scrollbar" noBorder>
-      <div className="flex-1" /> {/* Spacer to push messages down initially */}
+    <FrostContainer
+      className="flex-1 min-h-0 p-0"
+      contentClassName="h-full min-h-0 overflow-y-auto custom-scrollbar p-4 md:p-6 flex flex-col"
+      noBorder
+    >
+      <div className="flex-1 min-h-4" /> {/* Spacer to push messages down initially */}
 
-      <div className="flex flex-col gap-6">
+      <div className="flex flex-col gap-4 md:gap-6">
         {messages.map((msg, idx) => {
           const isUser = msg.role === 'user';
           const isSystem = msg.role === 'system';

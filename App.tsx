@@ -11,12 +11,12 @@ import {
   orderBy,
   serverTimestamp,
   Timestamp,
-  arrayUnion,
+  runTransaction,
 } from 'firebase/firestore';
 import { auth, db, getGameCollectionPath, getGameDocPath, getMessagesColPath } from './services/firebaseService';
 import { generateAIResponse } from './services/geminiService';
-import { CHARACTERS, ITEMS_REGISTRY, BADGES_REGISTRY } from './src/constants'; // Updated imports
-import type { GameState, Character, Player, Message, GameSession } from './src/types'; // Updated imports
+import { CHARACTERS, ITEMS_REGISTRY, BADGES_REGISTRY } from './src/constants';
+import type { GameState, Character, Player, Message, GameSession } from './src/types';
 
 import IntroScreen from './components/IntroScreen';
 import LobbyScreen from './components/LobbyScreen';
@@ -54,6 +54,16 @@ const writeLocalGame = (id: string, record: LocalGameRecord) => {
 };
 
 const createLocalGameId = () => `local-${crypto.randomUUID()}`;
+
+const uniqueIds = (ids: string[]) => Array.from(new Set(ids.filter(Boolean)));
+
+const sortMessages = (items: Message[]) => {
+  return [...items].sort((a, b) => {
+    const aMs = typeof a.timestamp?.toMillis === 'function' ? a.timestamp.toMillis() : 0;
+    const bMs = typeof b.timestamp?.toMillis === 'function' ? b.timestamp.toMillis() : 0;
+    return aMs - bMs;
+  });
+};
 
 export default function App() {
   const [gameState, setGameState] = useState<GameState>('intro');
@@ -104,7 +114,7 @@ export default function App() {
       if (docSnap.exists()) {
         const data = docSnap.data() as GameSession;
         setGameData({ ...data, id: docSnap.id });
-        setGameState('playing'); // If we have game data, we are in the game.
+        setGameState((state) => state === 'intro' ? state : 'playing');
       } else {
         setError("The game session you were in seems to have ended.");
         handleLeaveGame();
@@ -122,7 +132,7 @@ export default function App() {
       querySnapshot.forEach(doc => {
         msgs.push({ id: doc.id, ...doc.data() } as Message);
       });
-      setMessages(msgs);
+      setMessages(sortMessages(msgs));
     });
 
     return () => {
@@ -144,9 +154,10 @@ export default function App() {
       }
 
       setGameData(record.gameData);
-      setMessages(record.messages || []);
+      setMessages(sortMessages(record.messages || []));
       setSuggestions(record.suggestions || []);
-      setGameState(record.gameData.players.some((p) => p.userId === user?.uid) ? 'playing' : 'selection');
+      const nextState = record.gameData.players.some((p) => p.userId === user?.uid) ? 'playing' : 'selection';
+      setGameState((state) => state === 'intro' ? state : nextState);
     };
 
     syncLocalGame();
@@ -207,6 +218,7 @@ export default function App() {
       role,
       text,
       author: authorName,
+      userId: user.uid,
       isRoll,
       ...(rollOutcome ? { rollOutcome } : {}),
     };
@@ -220,7 +232,8 @@ export default function App() {
         ...baseMessage,
         timestamp: Timestamp.now(),
       };
-      record.messages = [...(record.messages || []), localMessage];
+      record.messages = sortMessages([...(record.messages || []), localMessage]);
+      record.gameData = { ...record.gameData, lastActiveAt: Timestamp.now() };
       writeLocalGame(gameId, record);
       setMessages(record.messages);
       setLocalVersion((version) => version + 1);
@@ -230,6 +243,9 @@ export default function App() {
     await addDoc(collection(db, getMessagesColPath(gameId)), {
       ...baseMessage,
       timestamp: serverTimestamp(),
+    });
+    await updateDoc(doc(db, getGameDocPath(gameId)), {
+      lastActiveAt: serverTimestamp(),
     });
   }, [gameId, user, selectedChar, storageMode]);
 
@@ -277,7 +293,7 @@ export default function App() {
                   const player = updatedPlayers[playerIdx];
                   const badges = player.badges || [];
                   if (!badges.find(b => b.id === badgeId)) {
-                      badges.push({ ...badgeDef, id: badgeId, earnedAt: Timestamp.now() } as any);
+                      badges.push({ ...badgeDef, id: badgeId, earnedAt: Timestamp.now() });
                       player.badges = badges;
                       hasUpdates = true;
                       await addMessageToDb('system', `✨ BADGE EARNED: ${targetName} - ${badgeDef.name} ✨`);
@@ -290,7 +306,7 @@ export default function App() {
           if (storageMode === 'local') {
               const record = readLocalGame(gameId);
               if (!record) return;
-              record.gameData = { ...record.gameData, players: updatedPlayers };
+              record.gameData = { ...record.gameData, players: updatedPlayers, lastActiveAt: Timestamp.now() };
               writeLocalGame(gameId, record);
               setGameData(record.gameData);
               setLocalVersion((version) => version + 1);
@@ -298,7 +314,7 @@ export default function App() {
           }
 
           const gameDocRef = doc(db, getGameDocPath(gameId));
-          await updateDoc(gameDocRef, { players: updatedPlayers });
+          await updateDoc(gameDocRef, { players: updatedPlayers, lastActiveAt: serverTimestamp() });
       }
 
   }, [gameId, gameData, addMessageToDb, storageMode]);
@@ -353,7 +369,10 @@ export default function App() {
       const newGame: Omit<GameSession, 'id'> = {
         hostId: user.uid,
         players: [],
+        playerIds: [user.uid],
         createdAt: serverTimestamp() as Timestamp,
+        lastActiveAt: serverTimestamp() as Timestamp,
+        status: 'active',
         inventory: {}, // Initialize empty
         badges: {}     // Initialize empty
       };
@@ -371,7 +390,10 @@ export default function App() {
         id: localGameId,
         hostId: user.uid,
         players: [],
+        playerIds: [user.uid],
         createdAt: Timestamp.now(),
+        lastActiveAt: Timestamp.now(),
+        status: 'active',
         inventory: {},
         badges: {}
       };
@@ -410,7 +432,7 @@ export default function App() {
         setStorageMode('local');
         setGameId(targetId);
         setGameData(localRecord.gameData);
-        setMessages(localRecord.messages || []);
+        setMessages(sortMessages(localRecord.messages || []));
         setSuggestions(localRecord.suggestions || []);
         setGameState('selection');
         setLocalVersion((version) => version + 1);
@@ -462,9 +484,19 @@ export default function App() {
         }
 
         const wasFirstPlayer = record.gameData.players.length === 0;
+        const takenBySomeoneElse = record.gameData.players.some((p) => p.charName === char.name && p.userId !== user.uid);
+        if (takenBySomeoneElse) {
+          setError(`${char.name} is already taken in this game.`);
+          return;
+        }
         const playersWithoutCurrentUser = record.gameData.players.filter((p) => p.userId !== user.uid);
         const updatedPlayers = [...playersWithoutCurrentUser, player];
-        record.gameData = { ...record.gameData, players: updatedPlayers };
+        record.gameData = {
+          ...record.gameData,
+          players: updatedPlayers,
+          playerIds: uniqueIds([...(record.gameData.playerIds || []), user.uid]),
+          lastActiveAt: Timestamp.now(),
+        };
         writeLocalGame(gameId, record);
         setGameData(record.gameData);
         setGameState('playing');
@@ -480,20 +512,47 @@ export default function App() {
       }
 
       const gameDocRef = doc(db, getGameDocPath(gameId));
-      await updateDoc(gameDocRef, {
-        players: arrayUnion(player)
+      const { updatedPlayers, wasFirstPlayer } = await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(gameDocRef);
+        if (!snap.exists()) {
+          throw new Error('GAME_NOT_FOUND');
+        }
+
+        const currentGame = snap.data() as GameSession;
+        const currentPlayers = currentGame.players || [];
+        const takenBySomeoneElse = currentPlayers.some((p) => p.charName === char.name && p.userId !== user.uid);
+        if (takenBySomeoneElse) {
+          throw new Error('CHARACTER_TAKEN');
+        }
+
+        const playersWithoutCurrentUser = currentPlayers.filter((p) => p.userId !== user.uid);
+        const nextPlayers = [...playersWithoutCurrentUser, player];
+        const nextPlayerIds = uniqueIds([...(currentGame.playerIds || []), ...nextPlayers.map((p) => p.userId), currentGame.hostId]);
+
+        transaction.update(gameDocRef, {
+          players: nextPlayers,
+          playerIds: nextPlayerIds,
+          lastActiveAt: serverTimestamp(),
+        });
+
+        return {
+          updatedPlayers: nextPlayers,
+          wasFirstPlayer: currentPlayers.length === 0,
+        };
       });
       // Add system message for joining
       await addMessageToDb('system', `${char.name} has joined the adventure!`);
       // Initial prompt for the very first player
-      const wasFirstPlayer = (gameData?.players.length ?? 0) === 0;
       if (wasFirstPlayer) {
         const dmInstruction = `INITIATE SESSION. The first player is ${char.name}. Starting Scene: ${char.startingScene}. Task: Narrate the scene. Add atmospheric details. End with: "What do you do?" and provide 3-4 suggestions.`;
-        await handleTriggerAIResponse([], dmInstruction, [player]);
+        await handleTriggerAIResponse([], dmInstruction, updatedPlayers);
       }
     } catch (err) {
       console.error("Failed to select character", err);
-      setError("Could not select your character. Please try again.");
+      const message = err instanceof Error && err.message === 'CHARACTER_TAKEN'
+        ? `${char.name} is already taken in this game.`
+        : "Could not select your character. Please try again.";
+      setError(message);
     } finally {
       setIsLoading(false);
     }
@@ -543,10 +602,46 @@ export default function App() {
       }
     }
   };
+
+  const handleContinueAdventure = () => {
+    if (!gameId) {
+      setGameState('lobby');
+      return;
+    }
+
+    if (storageMode === 'local') {
+      const record = readLocalGame(gameId);
+      if (!record) {
+        setError("The saved local game session could not be found.");
+        setGameState('lobby');
+        return;
+      }
+
+      setGameData(record.gameData);
+      setMessages(sortMessages(record.messages || []));
+      setSuggestions(record.suggestions || []);
+      setGameState(record.gameData.players.some((p) => p.userId === user?.uid) ? 'playing' : 'selection');
+      setLocalVersion((version) => version + 1);
+      return;
+    }
+
+    setGameState(gameData?.players.some((p) => p.userId === user?.uid) ? 'playing' : 'selection');
+  };
+
+  const localModeNotice = storageMode === 'local'
+    ? "Local browser mode: Firestore could not save this session, so it only works in this browser and cannot sync across devices."
+    : null;
   
   // --- Render Logic ---
   if (gameState === 'intro') {
-    return <IntroScreen onEnterLobby={() => setGameState('lobby')} isAuthReady={isAuthReady} />;
+    return (
+      <IntroScreen
+        onEnterLobby={() => setGameState('lobby')}
+        onContinueAdventure={handleContinueAdventure}
+        hasSavedGame={Boolean(gameId)}
+        isAuthReady={isAuthReady}
+      />
+    );
   }
 
   if (gameState === 'lobby') {
@@ -556,6 +651,7 @@ export default function App() {
             onJoinGame={handleJoinGame}
             isLoading={isLoading}
             error={error}
+            modeNotice={localModeNotice}
         />
     );
   }
@@ -569,6 +665,7 @@ export default function App() {
         error={error}
         gameId={gameId}
         playersInGame={gameData?.players || []}
+        modeNotice={localModeNotice}
       />
     );
   }
@@ -587,6 +684,7 @@ export default function App() {
         gameId={gameId}
         players={gameData.players}
         playerRole={playerRole}
+        modeNotice={localModeNotice}
       />
     );
   }

@@ -17,6 +17,8 @@ The browser app must not contain a Gemini API key. The Worker expects `GEMINI_AP
 
 If Firestore rules reject game writes, the app falls back to a same-browser local game mode using `local-...` game IDs. That keeps the RPG playable while Firebase rules are corrected, but cross-device multiplayer still requires Firestore permissions.
 
+Firebase rule setup is documented in `docs/firebase.md`.
+
 ## Local Setup
 
 1. Install dependencies:
@@ -70,6 +72,14 @@ npm audit --audit-level=moderate
 npm run build
 npx wrangler deploy --dry-run
 ```
+
+## Production Checklist
+
+1. Rotate/revoke the old exposed Gemini keys.
+2. Add `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, and the rotated `GEMINI_API_KEY` as GitHub secrets.
+3. Run the `Deploy Husky Snow AI Worker` workflow and verify `GET /health` plus `POST /generate`.
+4. Deploy `firestore.rules` with the Firebase CLI.
+5. Delete the archived legacy repository after refreshing GitHub auth with `delete_repo`.
 
 ## Legacy Backup
 
