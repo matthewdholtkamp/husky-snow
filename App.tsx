@@ -12,7 +12,6 @@ import {
   serverTimestamp,
   Timestamp,
   arrayUnion,
-  setDoc // Added setDoc
 } from 'firebase/firestore';
 import { auth, db, getGameCollectionPath, getGameDocPath, getMessagesColPath } from './services/firebaseService';
 import { generateAIResponse } from './services/geminiService';
@@ -25,6 +24,36 @@ import CharacterSelectionScreen from './components/CharacterSelectionScreen';
 import GameScreen from './src/components/GameScreen';
 
 const GAME_ID_KEY = 'husky-snow-gameId';
+const STORAGE_MODE_KEY = 'husky-snow-storageMode';
+const LOCAL_GAME_PREFIX = 'husky-snow-local-game:';
+
+type StorageMode = 'firestore' | 'local';
+
+type LocalGameRecord = {
+  gameData: GameSession;
+  messages: Message[];
+  suggestions: string[];
+};
+
+const getLocalGameKey = (id: string) => `${LOCAL_GAME_PREFIX}${id}`;
+
+const readLocalGame = (id: string): LocalGameRecord | null => {
+  const raw = localStorage.getItem(getLocalGameKey(id));
+  if (!raw) return null;
+
+  try {
+    return JSON.parse(raw) as LocalGameRecord;
+  } catch (e) {
+    console.error('Failed to read local game record:', e);
+    return null;
+  }
+};
+
+const writeLocalGame = (id: string, record: LocalGameRecord) => {
+  localStorage.setItem(getLocalGameKey(id), JSON.stringify(record));
+};
+
+const createLocalGameId = () => `local-${crypto.randomUUID()}`;
 
 export default function App() {
   const [gameState, setGameState] = useState<GameState>('intro');
@@ -32,6 +61,12 @@ export default function App() {
   const [isAuthReady, setIsAuthReady] = useState(false);
   
   const [gameId, setGameId] = useState<string | null>(() => localStorage.getItem(GAME_ID_KEY));
+  const [storageMode, setStorageMode] = useState<StorageMode>(() => {
+    const storedMode = localStorage.getItem(STORAGE_MODE_KEY);
+    const storedGameId = localStorage.getItem(GAME_ID_KEY);
+    return storedMode === 'local' || storedGameId?.startsWith('local-') ? 'local' : 'firestore';
+  });
+  const [localVersion, setLocalVersion] = useState(0);
   const [gameData, setGameData] = useState<GameSession | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -62,7 +97,7 @@ export default function App() {
 
   // --- Game and Message Subscription Effect ---
   useEffect(() => {
-    if (!gameId || !db) return;
+    if (!gameId || !db || storageMode === 'local') return;
 
     const gameDocRef = doc(db, getGameDocPath(gameId));
     const gameUnsubscribe = onSnapshot(gameDocRef, (docSnap) => {
@@ -94,7 +129,37 @@ export default function App() {
       gameUnsubscribe();
       messagesUnsubscribe();
     };
-  }, [gameId]);
+  }, [gameId, storageMode]);
+
+  // --- Local Fallback Game Sync Effect ---
+  useEffect(() => {
+    if (storageMode !== 'local' || !gameId) return;
+
+    const syncLocalGame = () => {
+      const record = readLocalGame(gameId);
+      if (!record) {
+        setError("The local game session could not be found.");
+        handleLeaveGame();
+        return;
+      }
+
+      setGameData(record.gameData);
+      setMessages(record.messages || []);
+      setSuggestions(record.suggestions || []);
+      setGameState(record.gameData.players.some((p) => p.userId === user?.uid) ? 'playing' : 'selection');
+    };
+
+    syncLocalGame();
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === getLocalGameKey(gameId)) {
+        syncLocalGame();
+      }
+    };
+
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, [storageMode, gameId, user?.uid, localVersion]);
 
 
   // FIX: Explicitly typed the useMemo return value to prevent `playerRole` from being widened to `string`.
@@ -130,18 +195,43 @@ export default function App() {
     }
   }, [messages, isThinking, playerRole]);
 
-  const addMessageToDb = useCallback(async (role: Message['role'], text: string, isRoll = false) => {
+  const addMessageToDb = useCallback(async (
+    role: Message['role'],
+    text: string,
+    isRoll = false,
+    rollOutcome?: string
+  ) => {
     if (!gameId || !user) return;
     const authorName = role === 'model' ? 'Quinn' : role === 'system' ? 'System' : (selectedChar?.name || 'Player');
-    const newMessage = {
+    const baseMessage = {
       role,
       text,
       author: authorName,
       isRoll,
-      timestamp: serverTimestamp(),
+      ...(rollOutcome ? { rollOutcome } : {}),
     };
-    await addDoc(collection(db, getMessagesColPath(gameId)), newMessage);
-  }, [gameId, user, selectedChar]);
+
+    if (storageMode === 'local') {
+      const record = readLocalGame(gameId);
+      if (!record) return;
+
+      const localMessage: Message = {
+        id: crypto.randomUUID(),
+        ...baseMessage,
+        timestamp: Timestamp.now(),
+      };
+      record.messages = [...(record.messages || []), localMessage];
+      writeLocalGame(gameId, record);
+      setMessages(record.messages);
+      setLocalVersion((version) => version + 1);
+      return;
+    }
+
+    await addDoc(collection(db, getMessagesColPath(gameId)), {
+      ...baseMessage,
+      timestamp: serverTimestamp(),
+    });
+  }, [gameId, user, selectedChar, storageMode]);
 
   const handleProcessCommands = useCallback(async (commands: string[]) => {
       if (!gameId || !gameData) return;
@@ -197,34 +287,62 @@ export default function App() {
       }
 
       if (hasUpdates) {
+          if (storageMode === 'local') {
+              const record = readLocalGame(gameId);
+              if (!record) return;
+              record.gameData = { ...record.gameData, players: updatedPlayers };
+              writeLocalGame(gameId, record);
+              setGameData(record.gameData);
+              setLocalVersion((version) => version + 1);
+              return;
+          }
+
           const gameDocRef = doc(db, getGameDocPath(gameId));
           await updateDoc(gameDocRef, { players: updatedPlayers });
       }
 
-  }, [gameId, gameData, addMessageToDb]);
+  }, [gameId, gameData, addMessageToDb, storageMode]);
 
-  const handleTriggerAIResponse = useCallback(async (history: Message[], prompt: string) => {
-    if (!gameData) return;
+  const handleTriggerAIResponse = useCallback(async (
+    history: Message[],
+    prompt: string,
+    playersOverride?: Player[]
+  ) => {
+    const activePlayers = playersOverride || gameData?.players;
+    if (!activePlayers || activePlayers.length === 0) return;
     setIsThinking(true);
     setSuggestions([]);
     setLastPrompt(prompt);
     
     try {
-      const { narrative, suggestions: newSuggestions, commands } = await generateAIResponse(history, prompt, gameData.players);
+      const { narrative, suggestions: newSuggestions, commands } = await generateAIResponse(history, prompt, activePlayers);
       await addMessageToDb('model', narrative);
       setSuggestions(newSuggestions);
+
+      if (storageMode === 'local' && gameId) {
+        const record = readLocalGame(gameId);
+        if (record) {
+          record.suggestions = newSuggestions;
+          writeLocalGame(gameId, record);
+          setLocalVersion((version) => version + 1);
+        }
+      }
 
       if (commands && commands.length > 0) {
           await handleProcessCommands(commands);
       }
 
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("AI Response Error:", err);
-      await addMessageToDb('error', `⚠️ ${err.message || "Connection lost."}`);
+      const message = err instanceof Error ? err.message : "Connection lost.";
+      const friendlyMessage = /quota|429|resource_exhausted/i.test(message)
+        ? "You've reached the daily request limit for the AI service. The story must pause until more quota is available."
+        : message;
+      await addMessageToDb('error', `⚠️ ${friendlyMessage}`);
     } finally {
       setIsThinking(false);
     }
-  }, [gameData, addMessageToDb, handleProcessCommands]);
+  }, [gameData, addMessageToDb, handleProcessCommands, storageMode, gameId]);
 
   // --- Game Flow Functions ---
   const handleCreateGame = async () => {
@@ -242,29 +360,72 @@ export default function App() {
       const gameCollection = collection(db, getGameCollectionPath());
       const docRef = await addDoc(gameCollection, newGame);
       localStorage.setItem(GAME_ID_KEY, docRef.id);
+      localStorage.setItem(STORAGE_MODE_KEY, 'firestore');
+      setStorageMode('firestore');
       setGameId(docRef.id);
       setGameState('selection');
     } catch (err) {
-      console.error("Failed to create game", err);
-      setError("Could not create a new game. Please try again.");
+      console.warn("Firestore create failed; using local browser game mode.", err);
+      const localGameId = createLocalGameId();
+      const localGameData: GameSession = {
+        id: localGameId,
+        hostId: user.uid,
+        players: [],
+        createdAt: Timestamp.now(),
+        inventory: {},
+        badges: {}
+      };
+      writeLocalGame(localGameId, {
+        gameData: localGameData,
+        messages: [],
+        suggestions: []
+      });
+      localStorage.setItem(GAME_ID_KEY, localGameId);
+      localStorage.setItem(STORAGE_MODE_KEY, 'local');
+      setStorageMode('local');
+      setGameId(localGameId);
+      setGameData(localGameData);
+      setMessages([]);
+      setSuggestions([]);
+      setGameState('selection');
+      setLocalVersion((version) => version + 1);
     } finally {
       setIsLoading(false);
     }
   };
 
   const handleJoinGame = async (idToJoin: string) => {
-    if (!idToJoin.trim()) {
+    const targetId = idToJoin.trim();
+    if (!targetId) {
         setError("Please enter a Game ID.");
         return;
     }
     setIsLoading(true);
     setError(null);
+
+    const localRecord = readLocalGame(targetId);
+    if (localRecord) {
+        localStorage.setItem(GAME_ID_KEY, targetId);
+        localStorage.setItem(STORAGE_MODE_KEY, 'local');
+        setStorageMode('local');
+        setGameId(targetId);
+        setGameData(localRecord.gameData);
+        setMessages(localRecord.messages || []);
+        setSuggestions(localRecord.suggestions || []);
+        setGameState('selection');
+        setLocalVersion((version) => version + 1);
+        setIsLoading(false);
+        return;
+    }
+
     try {
-        const gameDocRef = doc(db, getGameDocPath(idToJoin));
+        const gameDocRef = doc(db, getGameDocPath(targetId));
         const docSnap = await getDoc(gameDocRef);
         if (docSnap.exists()) {
-            localStorage.setItem(GAME_ID_KEY, idToJoin);
-            setGameId(idToJoin);
+            localStorage.setItem(GAME_ID_KEY, targetId);
+            localStorage.setItem(STORAGE_MODE_KEY, 'firestore');
+            setStorageMode('firestore');
+            setGameId(targetId);
             setGameState('selection');
         } else {
             setError("Game not found. Please check the ID and try again.");
@@ -293,6 +454,31 @@ export default function App() {
           badges: starterBadges
       };
 
+      if (storageMode === 'local') {
+        const record = readLocalGame(gameId);
+        if (!record) {
+          setError("The local game session could not be found.");
+          return;
+        }
+
+        const wasFirstPlayer = record.gameData.players.length === 0;
+        const playersWithoutCurrentUser = record.gameData.players.filter((p) => p.userId !== user.uid);
+        const updatedPlayers = [...playersWithoutCurrentUser, player];
+        record.gameData = { ...record.gameData, players: updatedPlayers };
+        writeLocalGame(gameId, record);
+        setGameData(record.gameData);
+        setGameState('playing');
+        setLocalVersion((version) => version + 1);
+
+        await addMessageToDb('system', `${char.name} has joined the adventure!`);
+
+        if (wasFirstPlayer) {
+          const dmInstruction = `INITIATE SESSION. The first player is ${char.name}. Starting Scene: ${char.startingScene}. Task: Narrate the scene. Add atmospheric details. End with: "What do you do?" and provide 3-4 suggestions.`;
+          await handleTriggerAIResponse([], dmInstruction, updatedPlayers);
+        }
+        return;
+      }
+
       const gameDocRef = doc(db, getGameDocPath(gameId));
       await updateDoc(gameDocRef, {
         players: arrayUnion(player)
@@ -300,9 +486,10 @@ export default function App() {
       // Add system message for joining
       await addMessageToDb('system', `${char.name} has joined the adventure!`);
       // Initial prompt for the very first player
-      if (gameData?.players.length === 0) {
+      const wasFirstPlayer = (gameData?.players.length ?? 0) === 0;
+      if (wasFirstPlayer) {
         const dmInstruction = `INITIATE SESSION. The first player is ${char.name}. Starting Scene: ${char.startingScene}. Task: Narrate the scene. Add atmospheric details. End with: "What do you do?" and provide 3-4 suggestions.`;
-        await handleTriggerAIResponse([], dmInstruction);
+        await handleTriggerAIResponse([], dmInstruction, [player]);
       }
     } catch (err) {
       console.error("Failed to select character", err);
@@ -314,11 +501,14 @@ export default function App() {
 
   const handleLeaveGame = () => {
     localStorage.removeItem(GAME_ID_KEY);
+    localStorage.removeItem(STORAGE_MODE_KEY);
+    setStorageMode('firestore');
     setGameId(null);
     setGameData(null);
     setMessages([]);
     setSuggestions([]);
     setGameState('lobby');
+    setLocalVersion((version) => version + 1);
   };
   
   const handleSend = async (text: string) => {
@@ -326,15 +516,17 @@ export default function App() {
     setSuggestions([]);
   };
   
-  const handleRoll = async () => {
+  const handleRoll = async (forcedResult?: number, forcedOutcome?: string, forcedRollText?: string) => {
     // Legacy support, now handled in GameScreen mostly
-    const result = Math.floor(Math.random() * 20) + 1;
-    let outcome = "Failure";
-    if (result > 15) outcome = "Critical Success!";
-    else if (result > 10) outcome = "Success";
-    else if (result === 1) outcome = "Critical Fail!";
-    const rollText = `*Rolls D20... Result: ${result}* (${outcome})`;
-    await addMessageToDb('user', rollText, true);
+    const result = forcedResult ?? Math.floor(Math.random() * 20) + 1;
+    let outcome = forcedOutcome || "Failure";
+    if (!forcedOutcome) {
+      if (result > 15) outcome = "Critical Success!";
+      else if (result > 10) outcome = "Success";
+      else if (result === 1) outcome = "Critical Fail!";
+    }
+    const rollText = forcedRollText || `*Rolls D20... Result: ${result}* (${outcome})`;
+    await addMessageToDb('user', rollText, true, outcome);
     setSuggestions([]);
   };
   

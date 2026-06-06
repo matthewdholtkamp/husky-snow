@@ -1,11 +1,4 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import {
-  collection,
-  addDoc,
-  serverTimestamp
-} from 'firebase/firestore';
-import { db, getMessagesColPath } from '../../services/firebaseService';
-import { CHARACTERS } from '../../src/constants';
 import type { Message, Character, Player, InventoryItem, Badge } from '../../src/types';
 
 // UI Components
@@ -17,7 +10,7 @@ import { MessageLog } from './game/MessageLog';
 import { ActionBar } from './game/ActionBar';
 import { Dice3D } from './effects/Dice3D';
 import { ScreenShake } from './effects/ScreenShake';
-import { LogOut, RefreshCw } from 'lucide-react';
+import { Dice5, LogOut, RefreshCw } from 'lucide-react';
 
 interface GameScreenProps {
   messages: Message[];
@@ -25,7 +18,7 @@ interface GameScreenProps {
   suggestions: string[];
   isThinking: boolean;
   onSendMessage: (text: string) => Promise<void>;
-  onRoll: () => Promise<void>; // Legacy, we might override this
+  onRoll: (result?: number, outcome?: string, rollText?: string) => Promise<void>;
   onLeaveGame: () => void;
   onRetry: () => void;
   gameId: string | null;
@@ -39,6 +32,7 @@ export default function GameScreen({
   suggestions,
   isThinking,
   onSendMessage,
+  onRoll,
   onLeaveGame,
   onRetry,
   gameId,
@@ -85,20 +79,7 @@ export default function GameScreen({
 
     const rollText = `*Rolls D20... Result: ${result}* (${outcome})`;
 
-    // Add roll message
-    if (gameId) {
-      const newMessage = {
-        role: 'user',
-        text: rollText,
-        author: selectedChar.name,
-        isRoll: true,
-        rollOutcome: outcome,
-        timestamp: serverTimestamp(),
-      };
-      // We use the raw firestore call here or pass a prop.
-      // Let's use the direct db call to ensure fields match
-      await addDoc(collection(db, getMessagesColPath(gameId)), newMessage);
-    }
+    await onRoll(result, outcome, rollText);
 
     // Trigger Screen Shake on low rolls (damage implication)
     if (result <= 5) {
@@ -110,6 +91,9 @@ export default function GameScreen({
   const triggerDice = () => {
     setShowDice(true);
   };
+
+  const canRoll = playerRole !== 'spectator' && !isThinking;
+  const aiRequestedRoll = messages.length > 0 && messages[messages.length - 1].text.includes("Roll the D20");
 
   // Check last message for "Roll the D20" command from AI
   useEffect(() => {
@@ -168,12 +152,12 @@ export default function GameScreen({
              <div className="mt-auto">
                <FrostContainer className="p-4" noBorder>
                   {/* If AI asks for roll, we could inject a special button here or relying on suggestions */}
-                  {messages.length > 0 && messages[messages.length-1].text.includes("Roll the D20") && !isThinking ? (
+                  {canRoll ? (
                      <button
                        onClick={triggerDice}
-                       className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-lg shadow-lg shadow-indigo-500/30 mb-4 animate-bounce"
+                       className={`w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-lg shadow-lg shadow-indigo-500/30 mb-4 flex items-center justify-center gap-2 ${aiRequestedRoll ? 'animate-bounce' : ''}`}
                      >
-                       🎲 ROLL THE D20
+                       <Dice5 className="w-5 h-5" /> Roll D20
                      </button>
                   ) : null}
 

@@ -1,6 +1,6 @@
 
 import React from 'react';
-import type { IconType } from '../types';
+import type { IconType } from '../src/types';
 
 interface StatBarProps {
   label: string;

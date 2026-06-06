@@ -1,39 +1,39 @@
 import { initializeApp, FirebaseApp } from 'firebase/app';
 import { getAuth, Auth } from 'firebase/auth';
 import { getFirestore, Firestore } from 'firebase/firestore';
-import { revealKey } from './security';
 
-// Hardcoded Firebase configuration
-const firebaseConfig = {
-  apiKey: revealKey("eE1zWS1PMHBaVXI1OGpwZHNlMTFwN01WbzBveHpsTm1RbEZubVZO"),
-  authDomain: "matts-husky-game.firebaseapp.com",
-  projectId: "matts-husky-game",
-  storageBucket: "matts-husky-game.appspot.com",
-  messagingSenderId: "782699210186",
-  appId: "1:782699210186:web:07777484ea30ef891c1b33",
-  measurementId: "G-0243VWTQS0"
+const requiredEnv = (key: keyof ImportMetaEnv): string => {
+  const value = import.meta.env[key];
+  if (!value) {
+    console.warn(`Missing Firebase environment variable: ${key}`);
+  }
+  return value || '';
 };
 
-// =================================================================================
-// Firebase Initialization
-// =================================================================================
+const firebaseConfig = {
+  apiKey: requiredEnv('VITE_FIREBASE_API_KEY'),
+  authDomain: requiredEnv('VITE_FIREBASE_AUTH_DOMAIN'),
+  projectId: requiredEnv('VITE_FIREBASE_PROJECT_ID'),
+  storageBucket: requiredEnv('VITE_FIREBASE_STORAGE_BUCKET'),
+  messagingSenderId: requiredEnv('VITE_FIREBASE_MESSAGING_SENDER_ID'),
+  appId: requiredEnv('VITE_FIREBASE_APP_ID'),
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || undefined,
+};
+
 let app: FirebaseApp;
 let auth: Auth;
 let db: Firestore;
 
 try {
-    app = initializeApp(firebaseConfig);
-    auth = getAuth(app);
-    db = getFirestore(app);
-} catch (e: any) {
-    console.error("Fatal Error: Failed to initialize Firebase with the hardcoded configuration.", e);
-    // In a real app, you might want to show a full-page error here.
+  app = initializeApp(firebaseConfig);
+  auth = getAuth(app);
+  db = getFirestore(app);
+} catch (e: unknown) {
+  console.error('Fatal Error: Failed to initialize Firebase from Vite environment variables.', e);
 }
 
 export { app, auth, db };
 
-
-// --- Path Helper Functions ---
 const APP_DATA_PREFIX = 'husky-snow-rpg-data';
 export const getGameCollectionPath = () => `/artifacts/${APP_DATA_PREFIX}/public/data/games`;
 export const getGameDocPath = (gameId: string) => `${getGameCollectionPath()}/${gameId}`;
