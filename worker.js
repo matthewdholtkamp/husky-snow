@@ -8,6 +8,7 @@ const ALLOWED_ORIGINS = [
 
 const DEFAULT_MODEL = 'gemini-2.5-pro';
 const DEFAULT_FALLBACK_MODEL = 'gemini-2.5-flash';
+const GEMINI_REFERER = 'https://matthewdholtkamp.github.io/husky-snow/';
 const RETRYABLE_STATUSES = new Set([429, 500, 503]);
 const MAX_REQUEST_BYTES = 200_000;
 const ALLOWED_MODELS = new Set([
@@ -59,7 +60,10 @@ const callGemini = async (env, model, body) => {
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${env.GEMINI_API_KEY}`;
   return fetch(endpoint, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'Referer': GEMINI_REFERER,
+    },
     body: JSON.stringify({
       systemInstruction: body.systemInstruction,
       contents: body.contents,
