@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import React, { useState, useEffect, useRef } from 'react';
+import { motion } from 'framer-motion';
 
 interface Dice3DProps {
   onRollComplete: (result: number) => void;
@@ -9,25 +9,40 @@ interface Dice3DProps {
 export const Dice3D: React.FC<Dice3DProps> = ({ onRollComplete, isRolling }) => {
   const [result, setResult] = useState<number | null>(null);
   const [showResult, setShowResult] = useState(false);
+  const [isVisible, setIsVisible] = useState(false);
+  const onRollCompleteRef = useRef(onRollComplete);
 
   useEffect(() => {
-    if (isRolling) {
-      setShowResult(false);
-      // Simulate roll time
-      const timer = setTimeout(() => {
-        const outcome = Math.floor(Math.random() * 20) + 1;
-        setResult(outcome);
-        setShowResult(true);
-        // Wait a moment for the user to see it before telling the parent it's done
-        setTimeout(() => {
-            onRollComplete(outcome);
-        }, 1500);
-      }, 2000);
-      return () => clearTimeout(timer);
-    }
+    onRollCompleteRef.current = onRollComplete;
+  }, [onRollComplete]);
+
+  useEffect(() => {
+    if (!isRolling) return;
+
+    setIsVisible(true);
+    setShowResult(false);
+    setResult(null);
+
+    let completeTimer: number | undefined;
+    const rollTimer = window.setTimeout(() => {
+      const outcome = Math.floor(Math.random() * 20) + 1;
+      setResult(outcome);
+      setShowResult(true);
+
+      completeTimer = window.setTimeout(() => {
+        setIsVisible(false);
+        setShowResult(false);
+        onRollCompleteRef.current(outcome);
+      }, 1500);
+    }, 2000);
+
+    return () => {
+      window.clearTimeout(rollTimer);
+      if (completeTimer) window.clearTimeout(completeTimer);
+    };
   }, [isRolling]);
 
-  if (!isRolling && !showResult) return null;
+  if (!isVisible) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">

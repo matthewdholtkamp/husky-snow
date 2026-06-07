@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 
 interface ScreenShakeProps {
@@ -9,13 +9,30 @@ interface ScreenShakeProps {
 
 export const ScreenShake: React.FC<ScreenShakeProps> = ({ children, trigger, intensity = 'soft' }) => {
   const [isShaking, setIsShaking] = useState(false);
+  const timerRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
+    if (timerRef.current) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = undefined;
+    }
+
     if (trigger) {
       setIsShaking(true);
-      const timer = setTimeout(() => setIsShaking(false), 500);
-      return () => clearTimeout(timer);
+      timerRef.current = window.setTimeout(() => {
+        setIsShaking(false);
+        timerRef.current = undefined;
+      }, 500);
+    } else {
+      setIsShaking(false);
     }
+
+    return () => {
+      if (timerRef.current) {
+        window.clearTimeout(timerRef.current);
+        timerRef.current = undefined;
+      }
+    };
   }, [trigger]);
 
   const shakeVariants = {

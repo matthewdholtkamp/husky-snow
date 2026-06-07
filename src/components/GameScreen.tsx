@@ -86,10 +86,11 @@ export default function GameScreen({
   };
 
   const triggerDice = () => {
+    if (showDice) return;
     setShowDice(true);
   };
 
-  const canRoll = playerRole !== 'spectator' && !isThinking;
+  const canRoll = playerRole !== 'spectator' && !isThinking && !showDice;
   const aiRequestedRoll = messages.length > 0 && messages[messages.length - 1].text.includes("Roll the D20");
 
   return (
@@ -158,6 +159,7 @@ export default function GameScreen({
                   {canRoll ? (
                      <button
                        onClick={triggerDice}
+                       disabled={showDice}
                        className={`w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-lg shadow-lg shadow-indigo-500/30 mb-4 flex items-center justify-center gap-2 ${aiRequestedRoll ? 'animate-bounce' : ''}`}
                      >
                        <Dice5 className="w-5 h-5" /> Roll D20
