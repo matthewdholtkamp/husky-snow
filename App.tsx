@@ -80,6 +80,14 @@ const sortMessages = (items: Message[]) => {
   });
 };
 
+const resolvePlayerIndex = (targetName: string, players: Player[]): number => {
+  const cleaned = targetName.trim().toLowerCase();
+  let nameToFind = cleaned;
+  if (cleaned === 'flurree') nameToFind = 'flurry';
+  if (cleaned === 'mist' || cleaned === 'misty') nameToFind = 'mistyfeather';
+  return players.findIndex(p => p.charName.toLowerCase() === nameToFind);
+};
+
 export default function App() {
   const [gameState, setGameState] = useState<GameState>('intro');
   const [user, setUser] = useState<User | null>(null);
@@ -289,7 +297,7 @@ export default function App() {
           if (action === 'ADD_ITEM' && args.length === 2) {
              const [targetName, itemId] = args;
              const itemDef = ITEMS_REGISTRY[itemId];
-             const playerIdx = updatedPlayers.findIndex(p => p.charName === targetName);
+             const playerIdx = resolvePlayerIndex(targetName, updatedPlayers);
 
              if (itemDef && playerIdx !== -1) {
                 const player = { ...updatedPlayers[playerIdx] };
@@ -305,14 +313,14 @@ export default function App() {
                 updatedPlayers[playerIdx] = player;
                 hasUpdates = true;
                 // Notify via system message
-                await addMessageToDb('system', `${targetName} received ${itemDef.name}.`);
+                await addMessageToDb('system', `${player.charName} received ${itemDef.name}.`);
              }
           }
 
           if (action === 'AWARD_BADGE' && args.length === 2) {
                const [targetName, badgeId] = args;
                const badgeDef = BADGES_REGISTRY[badgeId];
-               const playerIdx = updatedPlayers.findIndex(p => p.charName === targetName);
+               const playerIdx = resolvePlayerIndex(targetName, updatedPlayers);
 
                if (badgeDef && playerIdx !== -1) {
                    const player = { ...updatedPlayers[playerIdx] };
@@ -332,7 +340,7 @@ export default function App() {
                        player.badges = badges;
                        updatedPlayers[playerIdx] = player;
                        hasUpdates = true;
-                       await addMessageToDb('system', `✨ BADGE EARNED: ${targetName} - ${badgeDef.name} (+100 XP) ✨`);
+                       await addMessageToDb('system', `✨ BADGE EARNED: ${player.charName} - ${badgeDef.name} (+100 XP) ✨`);
                    }
                }
           }
@@ -340,7 +348,7 @@ export default function App() {
           if (action === 'DAMAGE' && args.length === 2) {
              const [targetName, amountStr] = args;
              const amount = parseInt(amountStr, 10);
-             const playerIdx = updatedPlayers.findIndex(p => p.charName === targetName);
+             const playerIdx = resolvePlayerIndex(targetName, updatedPlayers);
 
              if (!isNaN(amount) && playerIdx !== -1) {
                 const player = { ...updatedPlayers[playerIdx] };
@@ -349,9 +357,9 @@ export default function App() {
                 updatedPlayers[playerIdx] = player;
                 hasUpdates = true;
                 
-                await addMessageToDb('system', `💥 ${targetName} took ${amount} damage! (HP: ${player.hp}/${player.maxHp})`);
+                await addMessageToDb('system', `💥 ${player.charName} took ${amount} damage! (HP: ${player.hp}/${player.maxHp})`);
                 if (player.hp === 0) {
-                    await addMessageToDb('system', `⚠️ ${targetName} has been downed! They cannot act until revived by a packmate.`);
+                    await addMessageToDb('system', `⚠️ ${player.charName} has been downed! They cannot act until revived by a packmate.`);
                 }
              }
           }
@@ -359,7 +367,7 @@ export default function App() {
           if (action === 'HEAL' && args.length === 2) {
              const [targetName, amountStr] = args;
              const amount = parseInt(amountStr, 10);
-             const playerIdx = updatedPlayers.findIndex(p => p.charName === targetName);
+             const playerIdx = resolvePlayerIndex(targetName, updatedPlayers);
 
              if (!isNaN(amount) && playerIdx !== -1) {
                 const player = { ...updatedPlayers[playerIdx] };
@@ -368,7 +376,7 @@ export default function App() {
                 updatedPlayers[playerIdx] = player;
                 hasUpdates = true;
                 
-                await addMessageToDb('system', `💚 ${targetName} was healed for ${amount} HP! (HP: ${player.hp}/${player.maxHp})`);
+                await addMessageToDb('system', `💚 ${player.charName} was healed for ${amount} HP! (HP: ${player.hp}/${player.maxHp})`);
              }
           }
 
@@ -407,6 +415,17 @@ export default function App() {
              hasUpdates = true;
              await addMessageToDb('system', `🗺️ The scene shifts to: ${newScene.toUpperCase()}`);
           }
+
+          if (action === 'HEART' && args.length === 3) {
+             const [amountStr, value, reason] = args;
+             const amount = parseInt(amountStr.replace('+', ''), 10);
+             if (!isNaN(amount)) {
+                const currentHeart = gameData.packHeart ?? 100;
+                sessionUpdates.packHeart = Math.min(100, Math.max(0, currentHeart + amount));
+                hasUpdates = true;
+                await addMessageToDb('system', `💖 PACK HEART (+${amount}): The pack showed ${value.toUpperCase()}! Reason: ${reason}`);
+             }
+          }
       }
 
       if (hasUpdates) {
@@ -435,6 +454,31 @@ export default function App() {
 
   }, [gameId, gameData, addMessageToDb, storageMode]);
 
+  const handleSpendPackHeart = useCallback(async (amount: number, reason: string) => {
+    if (!gameId || !gameData) return;
+    const currentHeart = gameData.packHeart ?? 100;
+    const newHeart = Math.max(0, currentHeart - amount);
+    
+    const updateData = {
+      packHeart: newHeart,
+      lastActiveAt: storageMode === 'local' ? Timestamp.now() : serverTimestamp() as any
+    };
+
+    if (storageMode === 'local') {
+      const record = readLocalGame(gameId);
+      if (record) {
+        record.gameData = { ...record.gameData, ...updateData };
+        writeLocalGame(gameId, record);
+        setGameData(record.gameData);
+        setLocalVersion(v => v + 1);
+      }
+    } else {
+      const gameDocRef = doc(db, getGameDocPath(gameId));
+      await updateDoc(gameDocRef, updateData);
+    }
+    await addMessageToDb('system', `💔 PACK HEART (-${amount}): Spent Pack Heart for ${reason}. (Remaining: ${newHeart}/100)`);
+  }, [gameId, gameData, storageMode, addMessageToDb]);
+
   const handleTriggerAIResponse = useCallback(async (
     history: Message[],
     prompt: string,
@@ -447,22 +491,31 @@ export default function App() {
     setLastPrompt(prompt);
     
     try {
-      const { narrative, suggestions: newSuggestions, commands } = await generateAIResponse(
+      const { narrative, suggestions: newSuggestions, commands, suggestionsByPup: newSuggestionsByPup } = await generateAIResponse(
         history,
         prompt,
-        activePlayers,
-        gameData?.chapterId,
-        gameData?.objective
+        gameData,
+        playersOverride
       );
       await addMessageToDb('model', narrative);
       setSuggestions(newSuggestions);
 
-      if (storageMode === 'local' && gameId) {
-        const record = readLocalGame(gameId);
-        if (record) {
-          record.suggestions = newSuggestions;
-          writeLocalGame(gameId, record);
-          setLocalVersion((version) => version + 1);
+      if (gameId) {
+        if (storageMode === 'local') {
+          const record = readLocalGame(gameId);
+          if (record) {
+            record.suggestions = newSuggestions;
+            record.gameData.suggestionsByPup = newSuggestionsByPup || {};
+            writeLocalGame(gameId, record);
+            setGameData(record.gameData);
+            setLocalVersion((version) => version + 1);
+          }
+        } else {
+          const gameDocRef = doc(db, getGameDocPath(gameId));
+          await updateDoc(gameDocRef, {
+            suggestionsByPup: newSuggestionsByPup || {},
+            lastActiveAt: serverTimestamp()
+          });
         }
       }
 
@@ -739,7 +792,9 @@ export default function App() {
         objective: 'Investigate the Moonshine River and find out what is making the water sick.',
         scene: 'river',
         packWarmth: 100,
-        phase: 'initiative'
+        phase: 'initiative',
+        packHeart: 100,
+        suggestionsByPup: {}
       };
       const gameCollection = collection(db, getGameCollectionPath());
       const docRef = await addDoc(gameCollection, newGame);
@@ -765,7 +820,9 @@ export default function App() {
         objective: 'Investigate the Moonshine River and find out what is making the water sick.',
         scene: 'river',
         packWarmth: 100,
-        phase: 'initiative'
+        phase: 'initiative',
+        packHeart: 100,
+        suggestionsByPup: {}
       };
       writeLocalGame(localGameId, {
         gameData: localGameData,
@@ -1294,6 +1351,7 @@ export default function App() {
         objective={gameData.objective || 'Investigate the Moonshine River and find out what is making the water sick.'}
         scene={gameData.scene || 'river'}
         packWarmth={gameData.packWarmth ?? 100}
+        packHeart={gameData.packHeart ?? 100}
         gameStatus={gameData.status || 'active'}
         onUpdatePlayerHp={handleUpdatePlayerHp}
         onRetryChapter={handleRetryChapter}
@@ -1303,6 +1361,8 @@ export default function App() {
         turnOrder={gameData.turnOrder || []}
         currentTurnIndex={gameData.currentTurnIndex ?? 0}
         onInitiativeRoll={handleInitiativeRoll}
+        onSpendPackHeart={handleSpendPackHeart}
+        suggestionsByPup={gameData.suggestionsByPup}
       />
     );
   }

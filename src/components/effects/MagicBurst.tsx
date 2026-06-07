@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-export type VFXType = 'blue_orbs' | 'wind_streaks' | 'ice_shards' | 'gold_motes' | 'crit_gold';
+export type VFXType = 'blue_orbs' | 'wind_streaks' | 'ice_shards' | 'gold_motes' | 'crit_gold' | 'orange_embers' | 'red_bolts';
 
 interface MagicBurstProps {
   trigger: number;
@@ -18,7 +18,7 @@ interface Particle {
   opacity: number;
   duration: number;
   color: string;
-  shape: 'circle' | 'streak' | 'shard' | 'sparkle';
+  shape: 'circle' | 'streak' | 'shard' | 'sparkle' | 'bolt';
 }
 
 export const MagicBurst: React.FC<MagicBurstProps> = ({ trigger, type, onComplete }) => {
@@ -55,6 +55,14 @@ export const MagicBurst: React.FC<MagicBurstProps> = ({ trigger, type, onComplet
         case 'ice_shards':
           color = `hsl(${180 + Math.random() * 20}, 40%, 80%)`; // silver/ice
           shape = 'shard';
+          break;
+        case 'orange_embers':
+          color = `hsl(${15 + Math.random() * 25}, 95%, 55%)`; // fire orange
+          shape = Math.random() > 0.5 ? 'sparkle' : 'circle';
+          break;
+        case 'red_bolts':
+          color = `hsl(${340 + Math.random() * 20}, 95%, 55%)`; // red lightning
+          shape = 'bolt';
           break;
         case 'gold_motes':
         case 'crit_gold':
@@ -98,7 +106,7 @@ export const MagicBurst: React.FC<MagicBurstProps> = ({ trigger, type, onComplet
               y: p.y,
               scale: [0.5, p.scale, 0],
               opacity: [0.9, p.opacity, 0],
-              rotate: p.rotate + (p.shape === 'shard' ? 180 : 0)
+              rotate: p.rotate + (p.shape === 'shard' || p.shape === 'bolt' ? 180 : 0)
             }}
             exit={{ opacity: 0 }}
             transition={{ duration: p.duration, ease: "easeOut" }}
@@ -107,14 +115,17 @@ export const MagicBurst: React.FC<MagicBurstProps> = ({ trigger, type, onComplet
               backgroundColor: p.shape === 'streak' ? 'transparent' : p.color,
               borderRadius: p.shape === 'circle' ? '50%' : p.shape === 'sparkle' ? '25%' : '0%',
               boxShadow: p.shape === 'streak' ? 'none' : `0 0 10px ${p.color}`,
-              width: p.shape === 'streak' ? '30px' : p.shape === 'shard' ? '12px' : '8px',
-              height: p.shape === 'streak' ? '3px' : p.shape === 'shard' ? '12px' : '8px',
+              width: p.shape === 'streak' ? '30px' : p.shape === 'shard' || p.shape === 'bolt' ? '12px' : '8px',
+              height: p.shape === 'streak' ? '3px' : p.shape === 'shard' || p.shape === 'bolt' ? '12px' : '8px',
               ...(p.shape === 'streak' && {
                 borderBottom: `2px solid ${p.color}`,
                 transform: `rotate(${Math.atan2(p.y, p.x)}rad)`
               }),
               ...(p.shape === 'shard' && {
                 clipPath: 'polygon(50% 0%, 100% 38%, 82% 100%, 18% 100%, 0% 38%)', // pentagon shard
+              }),
+              ...(p.shape === 'bolt' && {
+                clipPath: 'polygon(40% 0%, 100% 0%, 50% 45%, 80% 45%, 10% 100%, 40% 55%, 20% 55%)', // lightning bolt
               })
             }}
           />

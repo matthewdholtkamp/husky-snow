@@ -1,4 +1,4 @@
-import type { Message, Player } from '../src/types';
+import type { Message, Player, GameSession } from '../src/types';
 import { CHARACTERS } from '../src/constants';
 
 const DEFAULT_WORKER_URL = 'https://husky-snow-ai.mholtkamp.workers.dev';
@@ -123,20 +123,51 @@ ${historyToSummarize.map((m) => `(${m.author || m.role}): ${m.text}`).join('\n')
   }
 };
 
-const buildSystemInstruction = (players: Player[], chapterId?: string, objective?: string): string => {
+const buildSystemInstruction = (gameData: GameSession | null, playersOverride?: Player[]): string => {
+  const players = playersOverride || gameData?.players || [];
   const allPlayerLore = players
     .map((p) => {
-      const char = CHARACTERS.find((c) => c.name === p.charName);
+      const char = CHARACTERS.find((c) => c.name.toLowerCase() === p.charName.toLowerCase());
       return char ? char.loreContext : `${p.charName} (Unknown Lore)`;
     })
     .join('\n');
 
-  const currentChapterContext = chapterId && objective
-    ? `\nCURRENT CHAPTER & OBJECTIVE:
+  // Format the LIVE PARTY STATE block
+  const chapterId = gameData?.chapterId || 'chapter_1';
+  const objective = gameData?.objective || 'Investigate the Moonshine River and find out what is making the water sick.';
+  const scene = gameData?.scene || 'river';
+  const currentTurnIndex = gameData?.currentTurnIndex;
+  const turnOrder = gameData?.turnOrder || [];
+  const activeTurnPlayer = (currentTurnIndex !== undefined && turnOrder[currentTurnIndex]) 
+    ? turnOrder[currentTurnIndex] 
+    : 'None';
+  const packHeart = gameData?.packHeart !== undefined ? gameData.packHeart : 100;
+
+  const playersState = players.map(p => {
+    const invStr = p.inventory && p.inventory.length > 0 
+      ? p.inventory.map(i => `${i.name} (x${i.quantity})`).join(', ') 
+      : 'None';
+    const badgeStr = p.badges && p.badges.length > 0 
+      ? p.badges.map(b => b.name).join(', ') 
+      : 'None';
+    const isDowned = (p.hp ?? 100) <= 0;
+    const cooldown = p.abilityCooldownChapter || 'None';
+    return `- ${p.charName}: HP ${p.hp}/${p.maxHp || 100} (${isDowned ? 'DOWNED' : 'Conscious'}), Rank: ${p.rank || 'Pup'}, Surge Cooldown: ${cooldown}, Inventory: ${invStr}, Badges: ${badgeStr}`;
+  }).join('\n');
+
+  const liveStateBlock = `
+=== LIVE PARTY STATE ===
 - Active Chapter: ${chapterId}
 - Current Objective: "${objective}"
-- When players achieve this objective, append exactly \`[[COMPLETE_OBJECTIVE: ${chapterId}]]\` on a separate line to advance the story. Do not make up a new chapter yourself; the system will transition once this command is received.`
-    : '';
+- Active Scene: ${scene}
+- Pack Heart: ${packHeart}
+- Turn Order: ${turnOrder.join(' ➔ ') || 'None'}
+- Active Turn Player: ${activeTurnPlayer}
+
+=== PLAYERS STATE ===
+${playersState}
+========================
+`;
 
   return `
 You are Quinn, the storyteller for a cinematic text RPG called "Husky's Snow: Tales of the Moonshine River Pack".
@@ -163,38 +194,42 @@ GAMEPLAY MECHANICS:
      * Natural 20 or TOTAL >= 16: Critical Success
    - Never ask for another roll until the previous roll result has been interpreted.
 
-2. HIDDEN COMMANDS:
+2. HIDDEN STATE COMMANDS:
    Put state commands at the very end of your response on separate lines.
    - Give item: [[ADD_ITEM: PlayerName | ItemId]]
    - Award badge: [[AWARD_BADGE: PlayerName | BadgeId]]
    - Inflict damage: [[DAMAGE: PlayerName | N]] (use reasonable small numbers, e.g., 5 to 20, when players fail rolls, trigger traps, or get hurt)
    - Restore health: [[HEAL: PlayerName | N]] (when players rest, consume items, or receive healing support)
    - Change active scene: [[SCENE: scene_id]] (scene_ids: cave, forest, river, snowfield, ravine, road, coyote_camp, dreamland)
-   - Complete active chapter: [[COMPLETE_OBJECTIVE: chapter_id]] (only when players achieve the active objective)
+   - Complete active chapter: [[COMPLETE_OBJECTIVE: chapter_id]]
+   - Award Pack Heart: [[HEART: +N | value | reason]] (value can be: courage, empathy, teamwork, perseverance. Give +10 or +15 when pups do something brave, helpful, cooperative, or keep trying after a failure). Name the value gently at most once per scene.
    - Item IDs: aloe, spiderweb, berry, net, crystal, trap, moss
    - Badge IDs: catch_fish, save_pup, brave_stand, legend_pack
-   - Only give items, badges, damage, or healing after a player visibly earns/experiences them through action or a resolved roll. Do not hand out rewards/status changes as filler.
 
-3. SUGGESTIONS:
-   Always end the visible turn with "What do you do?"
-   Then provide 3-4 distinct clickable suggestions, each on its own line starting with "-".
-   Suggestions must be specific, actionable, and safe for the current scene. Avoid generic options like "continue" or "explore more" unless tied to a concrete clue.
-${currentChapterContext}
+3. PER-PUP SYNCP SUGGESTIONS:
+   For every active playable pup in the session, you must output a suggestions command at the very end of your response on its own line:
+   [[SUGGESTIONS: PupName | suggestion 1 ; suggestion 2 ; suggestion 3]]
+   Suggestions must be specific, actionable, and tailored to that pup's personality and elements (e.g. Shiver being crafty/smart, Glacier being fierce/protective, Storm being blunt/boastful, Spruce being fast/witty, etc.). Do not output normal bulleted list suggestions starting with "-" anymore; use this format exclusively.
 
-LORE CONTEXT:
-The Moonshine River is poisoned. The prophecy says the young pack must find the crystal to save the pack.
-Good early adventure beats include: discovering sick river water, hearing Mist's first warning, finding a trail clue, choosing whether to help a packmate, and learning the crystal may be hidden beyond the frosted ravine.
+4. PACING & EPISODIC BEATS:
+   - Stay aligned with the current active chapter's intro, beats, and climax.
+   - You must NOT emit [[COMPLETE_OBJECTIVE: chapter_id]] until the players have completed at least 3 distinct story beats for the chapter and resolved the chapter's climax.
+   - Maintain episodic pacing to ensure a 30-45 minute play session per chapter. Offer optional exploration paths but keep the book spine intact.
 
-PLAYERS:
+CANON WORLD & CHARACTER BIBLE (TREAT AS LAW):
+- Magic elements: Only the seven quest pups have magic (Shiver = icy blue sparkles, Glacier = silver water droplets, Oak = white wind streaks, Flurry = gold healing motes, Spruce = fire embers on tail, Storm = crackling red lightning bolts, Mistyfeather = shadow wisps).
+- Other pups: Frostbite and Cold are background NPCs only (silly and fast/serious and strong, respectively; they stay at camp and have NO magic).
+- Mistyfeather (Mist) is the telepathic NPC guide with black void eyes. She is monotone, sarcastic, and creepy-calm.
+- Character strengths: Glacier and Storm are tied strongest (STR 18). Shiver is smartest (INT 18). Spruce is fastest (AGI 18).
+- Shiver's Word-Correction Trait: Shiver ALWAYS corrects anyone who uses a word that does not exist (e.g., "floppedy isn't a word, Storm"). Voice Shiver correcting non-existent words immediately and briefly.
+- Ending: The final choice is Light (restore) or Dark (destroy) and remains a placeholder. Do not fabricate a book ending.
+
+LIVE GAME STATE BLOCK (CRITICAL):
+Use this live state block to remain synchronized and prevent memory drift.
+${liveStateBlock}
+
+PLAYERS LORE:
 ${allPlayerLore}
-
-KEY NPCS:
-- Mistyfeather (Mist): Telepathic guide with black void eyes. Sarcastic, protective, mysterious.
-- Starwhirl: Noble leader of the Moonshine River Pack.
-- Snapper: Master crafter and Shiver's dad.
-- Sweetbrush: Wise Border Collie healer.
-- Dragonfly: Oak's over-protective mother.
-- Storm: Shiver and Glacier's mean older brother and rival.
 `;
 };
 
@@ -203,11 +238,35 @@ const parseAIText = (aiText: string): AIResponse => {
   const narrativeLines: string[] = [];
   const suggestionLines: string[] = [];
   const commandLines: string[] = [];
+  const suggestionsByPup: Record<string, string[]> = {};
 
   lines.forEach((line) => {
     const trimmed = line.trim();
     if (trimmed.startsWith('[[') && trimmed.endsWith(']]')) {
-      commandLines.push(trimmed);
+      const content = trimmed.substring(2, trimmed.length - 2).trim();
+      const firstColon = content.indexOf(':');
+      if (firstColon !== -1) {
+        const action = content.substring(0, firstColon).trim();
+        const argsStr = content.substring(firstColon + 1).trim();
+        
+        if (action === 'SUGGESTIONS') {
+          const pipeIdx = argsStr.indexOf('|');
+          if (pipeIdx !== -1) {
+            const rawPupName = argsStr.substring(0, pipeIdx).trim();
+            const suggestionsList = argsStr.substring(pipeIdx + 1)
+              .split(';')
+              .map(s => s.trim())
+              .filter(Boolean);
+            
+            const pupName = rawPupName.charAt(0).toUpperCase() + rawPupName.slice(1).toLowerCase();
+            suggestionsByPup[pupName] = suggestionsList;
+          }
+        } else {
+          commandLines.push(trimmed);
+        }
+      } else {
+        commandLines.push(trimmed);
+      }
     } else if (trimmed.startsWith('-')) {
       suggestionLines.push(trimmed.substring(1).trim());
     } else {
@@ -219,15 +278,15 @@ const parseAIText = (aiText: string): AIResponse => {
     narrative: narrativeLines.join('\n').trim(),
     suggestions: suggestionLines.filter(Boolean),
     commands: commandLines,
+    suggestionsByPup,
   };
 };
 
 export const generateAIResponse = async (
   history: Message[],
   prompt: string,
-  players: Player[],
-  chapterId?: string,
-  objective?: string
+  gameData: GameSession | null,
+  playersOverride?: Player[]
 ): Promise<AIResponse> => {
   let summary: string | null = null;
   let processedHistory = [...history];
@@ -261,7 +320,7 @@ export const generateAIResponse = async (
   const text = await generateText({
     model: PRIMARY_MODEL,
     fallbackModel: FALLBACK_MODEL,
-    systemInstruction: buildSystemInstruction(players, chapterId, objective),
+    systemInstruction: buildSystemInstruction(gameData, playersOverride),
     contents,
     generationConfig: {
       maxOutputTokens: 900,

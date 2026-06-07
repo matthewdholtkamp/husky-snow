@@ -50,6 +50,7 @@ interface GameScreenProps {
   objective: string;
   scene: string;
   packWarmth: number;
+  packHeart: number;
   gameStatus: 'active' | 'ended';
   onUpdatePlayerHp: (charName: string, amount: number) => Promise<void>;
   onRetryChapter: () => Promise<void>;
@@ -59,6 +60,8 @@ interface GameScreenProps {
   turnOrder?: string[];
   currentTurnIndex?: number;
   onInitiativeRoll?: (result: number) => void;
+  onSpendPackHeart?: (amount: number, reason: string) => Promise<void>;
+  suggestionsByPup?: Record<string, string[]>;
 }
 
 export default function GameScreen({
@@ -78,15 +81,18 @@ export default function GameScreen({
   objective,
   scene,
   packWarmth,
+  packHeart = 100,
   gameStatus,
   onUpdatePlayerHp,
   onRetryChapter,
   onUseAbility,
   onUseItem,
-  phase = 'playing',
+  phase = 'initiative',
   turnOrder = [],
   currentTurnIndex = 0,
-  onInitiativeRoll
+  onInitiativeRoll,
+  onSpendPackHeart,
+  suggestionsByPup,
 }: GameScreenProps) {
 
   // Local State
@@ -107,6 +113,10 @@ export default function GameScreen({
   });
   const [showLevelUpRank, setShowLevelUpRank] = useState<string | null>(null);
   const [mistHint, setMistHint] = useState<string | null>(null);
+  const [recapText, setRecapText] = useState<string | null>(null);
+  const [loadingRecap, setLoadingRecap] = useState(false);
+  const [showRecapModal, setShowRecapModal] = useState(false);
+  const [showReflectionChapId, setShowReflectionChapId] = useState<string | null>(null);
   const [isAudioMuted, setIsAudioMuted] = useState(() => audioService.isMuted());
   const [reducedMotionSetting, setReducedMotionSetting] = useState(() => localStorage.getItem('husky-snow-reduced-motion') === 'true');
 
@@ -162,6 +172,64 @@ export default function GameScreen({
     
     prevRankRef.current = currentRank;
   }, [players, selectedChar]);
+
+  const prevChapterIdRef = useRef(chapterId);
+  useEffect(() => {
+    if (prevChapterIdRef.current && prevChapterIdRef.current !== chapterId) {
+      // Chapter transitioned! Show reflection for the one that just finished
+      setShowReflectionChapId(prevChapterIdRef.current);
+    }
+    prevChapterIdRef.current = chapterId;
+  }, [chapterId]);
+
+  useEffect(() => {
+    // Only show recap if there are existing messages in history (resuming a game)
+    // and we haven't already dismissed it in this session.
+    if (messages.length > 3 && gameId && !sessionStorage.getItem(`husky-recap-shown-${gameId}`)) {
+      setLoadingRecap(true);
+      setShowRecapModal(true);
+      
+      const fetchRecap = async () => {
+        try {
+          const { summarizeHistory } = await import('../../services/geminiService');
+          const gameMessages = messages.filter(m => m.role === 'user' || m.role === 'model');
+          const summary = await summarizeHistory(gameMessages.slice(0, -1));
+          setRecapText(summary);
+        } catch (err) {
+          console.error("Failed to generate recap:", err);
+          setRecapText("The story continues as the pack moves forward...");
+        } finally {
+          setLoadingRecap(false);
+        }
+      };
+      
+      fetchRecap();
+    }
+  }, [gameId]);
+
+  const getEpisodeReflection = (completedChapId: string) => {
+    const heartMessages = messages.filter(m => m.role === 'system' && m.text.includes('PACK HEART'));
+    const valuesShown = {
+      courage: false,
+      empathy: false,
+      teamwork: false,
+      perseverance: false,
+    };
+    const details: string[] = [];
+
+    heartMessages.forEach(m => {
+      const text = m.text.toLowerCase();
+      if (text.includes('courage')) valuesShown.courage = true;
+      if (text.includes('empathy')) valuesShown.empathy = true;
+      if (text.includes('teamwork')) valuesShown.teamwork = true;
+      if (text.includes('perseverance')) valuesShown.perseverance = true;
+      
+      const cleanText = m.text.replace('💖 PACK HEART', '').trim();
+      details.push(cleanText);
+    });
+
+    return { valuesShown, details };
+  };
 
   // Mist Idle Hint System (30 seconds idle trigger)
   useEffect(() => {
@@ -404,18 +472,22 @@ export default function GameScreen({
                     {downedTeammate && !isDowned && (
                        <button
                          onClick={async () => {
-                           if (!isMyTurn) return;
+                           if (!isMyTurn || packHeart < 30) return;
+                           if (onSpendPackHeart) {
+                             await onSpendPackHeart(30, `reviving ${downedTeammate.charName}`);
+                           }
                            await onUpdatePlayerHp(downedTeammate.charName, 50);
-                           await onSendMessage(`spend my turn to revive my packmate ${downedTeammate.charName}!`);
+                           await onSendMessage(`spend my turn and 30 Pack Heart to revive my packmate ${downedTeammate.charName}!`);
                          }}
-                         disabled={!isMyTurn}
+                         disabled={!isMyTurn || packHeart < 30}
                          className={`w-full py-4 text-white font-bold rounded-lg shadow-lg mb-4 flex items-center justify-center gap-2 transition-all ${
-                           !isMyTurn 
+                           (!isMyTurn || packHeart < 30)
                              ? 'bg-slate-800 text-slate-500 border border-white/5 cursor-not-allowed shadow-none opacity-50' 
                              : 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-500/30 active:scale-95'
                          }`}
                        >
-                         <Heart className={`w-5 h-5 fill-white ${isMyTurn ? 'animate-pulse' : ''}`} /> Revive {downedTeammate.charName} (+50 HP)
+                         <Heart className={`w-5 h-5 fill-white ${isMyTurn && packHeart >= 30 ? 'animate-pulse' : ''}`} /> 
+                         Revive {downedTeammate.charName} (Costs 30 Pack Heart, restores 50 HP)
                        </button>
                     )}
 
@@ -449,13 +521,34 @@ export default function GameScreen({
                        </button>
                     ) : null}
 
-                   <ActionBar
-                     suggestions={isDowned ? [] : suggestions}
-                     onAction={handleAction}
-                     characterName={selectedChar.name}
-                     isThinking={isThinking}
-                     disabled={!isMyTurn}
-                   />
+                    {/* Re-roll option */}
+                    {canRoll && !isDowned && !showIgniteButton && lastMessage?.isRoll && (
+                       <button
+                         onClick={async () => {
+                           if (!isMyTurn || packHeart < 20) return;
+                           if (onSpendPackHeart) {
+                             await onSpendPackHeart(20, 're-rolling failed check');
+                           }
+                           triggerDice();
+                         }}
+                         disabled={!isMyTurn || packHeart < 20 || showDice}
+                         className={`w-full py-4 text-white font-bold rounded-lg shadow-lg mb-4 flex items-center justify-center gap-2 transition-all ${
+                           (!isMyTurn || packHeart < 20)
+                             ? 'bg-slate-800 text-slate-500 border border-white/5 cursor-not-allowed shadow-none opacity-50' 
+                             : 'bg-rose-600 hover:bg-rose-500 shadow-rose-500/30 active:scale-[0.98]'
+                         }`}
+                       >
+                         <RefreshCw className="w-5 h-5" /> Re-roll D20 (Costs 20 Pack Heart)
+                       </button>
+                    )}
+
+                    <ActionBar
+                      suggestions={isDowned ? [] : ((suggestionsByPup && suggestionsByPup[selectedChar.name]) || suggestions)}
+                      onAction={handleAction}
+                      characterName={selectedChar.name}
+                      isThinking={isThinking}
+                      disabled={!isMyTurn}
+                    />
                </FrostContainer>
              </div>
 
@@ -698,6 +791,120 @@ export default function GameScreen({
           isSinglePlayer={players.length <= 1}
           phase={phase}
         />
+      )}
+
+      {/* Recap Modal */}
+      {showRecapModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4 animate-fade-in">
+          <div className="w-full max-w-lg bg-slate-900/90 border border-indigo-500/30 rounded-2xl p-6 shadow-[0_0_40px_rgba(99,102,241,0.2)] text-center relative overflow-hidden">
+            <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-cyan-500 via-indigo-500 to-purple-600" />
+            <h2 className="text-2xl font-serif font-bold text-white mb-2 tracking-wide">
+              Previously on Husky's Snow...
+            </h2>
+            <p className="text-xs text-indigo-400 uppercase tracking-widest font-semibold mb-6">
+              {chapterTitle}
+            </p>
+            
+            <div className="max-h-[300px] overflow-y-auto custom-scrollbar bg-slate-950/50 border border-white/5 rounded-xl p-4 mb-6 text-left text-sm leading-relaxed text-slate-300 italic font-serif">
+              {loadingRecap ? (
+                <div className="flex flex-col items-center justify-center py-8 gap-3">
+                  <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                  <span className="text-xs text-slate-500 font-sans not-italic">Reading the snowy records...</span>
+                </div>
+              ) : (
+                recapText || "The journey continues..."
+              )}
+            </div>
+
+            <button
+              onClick={() => {
+                setShowRecapModal(false);
+                if (gameId) {
+                  sessionStorage.setItem(`husky-recap-shown-${gameId}`, 'true');
+                }
+              }}
+              disabled={loadingRecap}
+              className="px-8 py-3 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 text-white font-bold rounded-lg shadow-lg shadow-indigo-500/20 transition-all active:scale-95"
+            >
+              Continue Adventure
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Episode Reflection Modal */}
+      {showReflectionChapId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-md p-4 animate-fade-in">
+          <div className="w-full max-w-lg bg-slate-900/90 border border-rose-500/30 rounded-2xl p-6 shadow-[0_0_40px_rgba(244,63,94,0.15)] text-center relative overflow-hidden">
+            <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-rose-500 to-amber-500" />
+            <h2 className="text-2xl font-serif font-bold text-white mb-1 tracking-wide">
+              Episode Complete!
+            </h2>
+            <p className="text-xs text-rose-400 uppercase tracking-widest font-semibold mb-6">
+              Reflections on your journey
+            </p>
+            
+            <div className="bg-slate-950/50 border border-white/5 rounded-xl p-4 mb-6 text-left">
+              <h3 className="text-sm font-semibold text-slate-200 mb-3 uppercase tracking-wider">
+                Pack Values Demonstrated:
+              </h3>
+              
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                {[
+                  { name: 'courage', label: 'Courage 🦁', desc: 'Facing fears & taking risks' },
+                  { name: 'empathy', label: 'Empathy 🤝', desc: 'Helping and comforting others' },
+                  { name: 'teamwork', label: 'Teamwork 🐺', desc: 'Working together as one' },
+                  { name: 'perseverance', label: 'Perseverance 🏔️', desc: 'Keeping on after failure' }
+                ].map(v => {
+                  const hasValue = getEpisodeReflection(showReflectionChapId).valuesShown[v.name as 'courage' | 'empathy' | 'teamwork' | 'perseverance'];
+                  return (
+                    <div 
+                      key={v.name} 
+                      className={`p-3 rounded-lg border transition-all ${
+                        hasValue 
+                          ? 'bg-rose-500/10 border-rose-500/30 text-white shadow-sm' 
+                          : 'bg-slate-950/40 border-white/5 text-slate-500'
+                      }`}
+                    >
+                      <div className="font-bold text-sm flex items-center gap-1.5">
+                        <span className={hasValue ? 'scale-110' : 'opacity-40'}>
+                          {hasValue ? '✅' : '⚫'}
+                        </span>
+                        {v.label}
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-1">{v.desc}</div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <h3 className="text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wider">
+                Key moments:
+              </h3>
+              <div className="max-h-[120px] overflow-y-auto custom-scrollbar text-xs leading-relaxed text-slate-300 space-y-1.5">
+                {getEpisodeReflection(showReflectionChapId).details.length > 0 ? (
+                  getEpisodeReflection(showReflectionChapId).details.map((d, i) => (
+                    <div key={i} className="flex gap-1">
+                      <span className="text-rose-400">•</span>
+                      <span>{d}</span>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-slate-500 italic">No specific values logged, but the pack stayed warm and moved forward together.</p>
+                )}
+              </div>
+            </div>
+
+            <button
+              onClick={() => {
+                setShowReflectionChapId(null);
+              }}
+              className="px-8 py-3 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-lg shadow-lg shadow-rose-500/20 transition-all active:scale-95 animate-pulse"
+            >
+              Begin Next Episode
+            </button>
+          </div>
+        </div>
       )}
 
     </div>

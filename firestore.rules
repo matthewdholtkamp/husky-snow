@@ -26,7 +26,9 @@ service cloud.firestore {
         'packWarmth',
         'turnOrder',
         'currentTurnIndex',
-        'phase'
+        'phase',
+        'packHeart',
+        'suggestionsByPup'
       ]);
     }
 

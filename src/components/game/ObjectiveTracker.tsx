@@ -1,15 +1,17 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Compass, Sparkles } from 'lucide-react';
+import { Compass, Sparkles, Heart } from 'lucide-react';
 
 interface ObjectiveTrackerProps {
   chapterTitle: string;
   objectiveText: string;
+  packHeart?: number;
 }
 
 export const ObjectiveTracker: React.FC<ObjectiveTrackerProps> = ({
   chapterTitle,
   objectiveText,
+  packHeart,
 }) => {
   return (
     <div className="w-full bg-slate-900/55 backdrop-blur-md border border-white/10 rounded-xl p-3 shadow-lg select-none">
@@ -49,6 +51,23 @@ export const ObjectiveTracker: React.FC<ObjectiveTrackerProps> = ({
           </AnimatePresence>
         </div>
       </div>
+
+      {packHeart !== undefined && (
+        <div className="border-t border-white/5 mt-2 pt-2 flex items-center justify-between text-xs">
+          <div className="flex items-center gap-1.5">
+            <Heart className="w-3.5 h-3.5 text-rose-500 fill-rose-500 animate-pulse shrink-0" />
+            <span className="text-slate-400 font-medium">Pack Heart:</span>
+            <span className="font-bold text-white font-mono">{packHeart}/100</span>
+          </div>
+          {/* Progress bar */}
+          <div className="w-1/2 max-w-[120px] bg-slate-950/60 rounded-full h-2 overflow-hidden border border-white/5">
+            <div 
+              className="bg-gradient-to-r from-rose-600 to-rose-400 h-full rounded-full transition-all duration-500 shadow-[0_0_8px_rgba(244,63,94,0.5)]" 
+              style={{ width: `${packHeart}%` }}
+            />
+          </div>
+        </div>
+      )}
       
       <style>{`
         .animate-spin-slow {

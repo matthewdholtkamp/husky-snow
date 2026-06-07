@@ -1,4 +1,4 @@
-import { Hammer, Shield, Heart, Zap } from 'lucide-react'; // Using lucide-react directly
+import { Hammer, Shield, Heart, Zap, Flame, CloudLightning } from 'lucide-react'; // Using lucide-react directly
 import type { Character, InventoryItem, Badge } from './types';
 
 // --- Item Registry ---
@@ -167,6 +167,50 @@ export const CHARACTERS: Character[] = [
     - RELATIONS: Apprentice to Sweetbrush (Border Collie).
     - STORY: Dreamt of the poisoned river first.`,
     startingScene: "The sharp scent of crushed herbs fills the Healer's Den. Sweetbrush, the golden-eyed Border Collie, nudges some aloe toward you. 'Pack your pouches, Flurry,' she says. 'The wind whispers of trouble.'"
+  },
+  {
+    id: 'spruce',
+    name: 'Spruce',
+    role: 'The Witty Hunter',
+    description: 'The jokester and morale engine of the pack. The fastest of all the pups, who uses humor to defuse fear.',
+    stats: { strength: 11, agility: 18, smart: 13, spirit: 12 },
+    ability: 'Blazing Dash',
+    color: 'bg-orange-500',
+    icon: Flame,
+    visuals: {
+      harnessColor: 'Lightweight Camo with Hood',
+      features: ['Dark Brown with White Underside', 'Hood + Tail Cover', 'Rope Strapped to Side'],
+      badgeSlots: { small: null, medium: null, large: null }
+    },
+    loreContext: `SPRUCE (Player): The witty hunter and comic relief.
+    - VISUAL: Dark brown coat with a white underside. Wears a Lightweight Camo Harness with a hood, a tail cover, and rope strapped to the side.
+    - PERSONALITY: Sarcastic, fast-talking, confident, brave. "I'm the one who does jokes around here!" Fastest of all pups. Defuses fear.
+    - ABILITY: Blazing Dash [fire] (scout or joke to restore Pack Heart).
+    - RELATIONS: Sister to Oak and Pine. Daughter of Falcon (deceased).
+    - STORY: Often scouts ahead and leads from the front with quick humor.`,
+    startingScene: "You leap over a fallen pine log, landing with a quick grin. Your lightweight camo harness is secure, the rope bobbing on your side. Spruce is here, and where Spruce goes, the laughter follows! Ahead, the wind carries a strange, oily smell from the river. Time to scout."
+  },
+  {
+    id: 'storm',
+    name: 'Storm',
+    role: 'The Abrasive Fighter',
+    description: 'Shiver\'s arrogant rival brother. Powerful, proud, and blunt, but secretly caring and deeply loyal.',
+    stats: { strength: 18, agility: 13, smart: 11, spirit: 12 },
+    ability: 'Thunder Charge',
+    color: 'bg-rose-600',
+    icon: CloudLightning,
+    visuals: {
+      harnessColor: 'Black Armor',
+      features: ['Dark Grey with Grey Underbelly', 'Dark Blue Eyes', 'Black Armor'],
+      badgeSlots: { small: null, medium: null, large: null }
+    },
+    loreContext: `STORM (Player): The abrasive rival fighter.
+    - VISUAL: Dark grey coat, grey underbelly, dark blue eyes. Wears heavy Black Armor Harness.
+    - PERSONALITY: Arrogant, abrasive rival. Brags, calls others "fluffbrained" or "floppedy fish". Not evil; softens and joins the group later. Strong and blunt.
+    - ABILITY: Thunder Charge [red lightning] (powerful strike / force barriers back).
+    - RELATIONS: Brother to Shiver, Glacier, Frostbite, Cold. Son of Mouse & Snapper.
+    - STORY: Demands to join the quest at the boundary line, bringing muscle and red lightning magic.`,
+    startingScene: "You snarl, flexing your strong paws in the snow. Your heavy black armor harness makes you feel invulnerable. Glacier claims she's strong, but you know you're the one with the sharpest teeth and strongest paws here. You'll show them all who's the real hero of the pack."
   }
 ];
 
@@ -219,12 +263,97 @@ export const SPIRIT_CARDS: SpiritCard[] = [
     sigil: '🌿'
   },
   {
-    id: 'lunaprie',
-    name: 'Lunaprie',
+    id: 'lunarprie',
+    name: 'Lunarprie',
     element: 'luna',
     color: 'text-purple-300 border-purple-500/30 bg-purple-500/5 shadow-[0_0_15px_rgba(168,85,247,0.1)]',
     unlockedAtChapter: 'chapter_7',
     lore: "The ancient spirit of the moon itself. She watches over the trainees' trials from her starry throne: 'The river flows, the moon shines, and the pack endures.'",
     sigil: '🌙'
+  }
+];
+
+// --- NPC Registry ---
+export interface NPC {
+  id: string;
+  name: string;
+  look: string;
+  personality: string;
+  voice: string;
+  role: string;
+}
+
+export const NPCS: NPC[] = [
+  {
+    id: 'mist',
+    name: 'Mistyfeather (Mist)',
+    look: 'Black fur (blackened by dark spirits), black void eyes. Young.',
+    personality: 'Monotone, sarcastic, creepy-calm, protective of Shiver.',
+    voice: 'Creepy-calm, monotone, dry one-liners.',
+    role: 'Telepathic Guide'
+  },
+  {
+    id: 'starwhirl',
+    name: 'Starwhirl',
+    look: 'Black with white underbelly, star-shaped spot on forehead. Dark-purple harness with glittery stars.',
+    personality: 'Noble, kind, a bit literal (misses jokes), young and newer to leadership than she seems.',
+    voice: 'Noble and authoritative.',
+    role: 'Pack Leader'
+  },
+  {
+    id: 'sweetbrush',
+    name: 'Sweetbrush',
+    look: 'Golden-eyed border collie (only non-husky). Wise.',
+    personality: 'Wise, strict-but-kind, gathers herbs daily.',
+    voice: 'Wise, nurturing, strict but warm.',
+    role: 'Pack Healer'
+  },
+  {
+    id: 'dragonfly',
+    name: 'Dragonfly',
+    look: 'Dark brown, wild turquoise eyes.',
+    personality: 'Over-protective to the point of hostility, blames Shiver for Oak\'s leg, loves Oak fiercely.',
+    voice: 'Anxious, sharp, protective.',
+    role: 'Oak\'s Mother'
+  },
+  {
+    id: 'frostbite',
+    name: 'Frostbite',
+    look: 'Shiver\'s brother. Normal husky coat, no magic.',
+    personality: 'Silly and fast. Copy-cat companion to Cold.',
+    voice: 'Goofy, playful, enthusiastic.',
+    role: 'Background Pack Member'
+  },
+  {
+    id: 'cold',
+    name: 'Cold',
+    look: 'Shiver\'s brother. Normal husky coat, no magic.',
+    personality: 'Serious and stronger. Copy-cat companion to Frostbite.',
+    voice: 'Serious, short-spoken.',
+    role: 'Background Pack Member'
+  },
+  {
+    id: 'quicksand',
+    name: 'Quicksand',
+    look: 'Coyote. Light brown with black swirls, one blue + one gold eye, missing an ear, stumpy tail.',
+    personality: 'Fierce, teasing, dramatic (pauses for suspense), befriends Glacier.',
+    voice: 'Dramatic, teasing, fierce.',
+    role: 'Amberwood Coyote Pup'
+  },
+  {
+    id: 'thorn',
+    name: 'Thorn',
+    look: 'Coyote. Yellow eyes.',
+    personality: 'Gruff, suspicious, growly, uneasy around Mist.',
+    voice: 'Gruff and defensive.',
+    role: 'Quicksand\'s Brother'
+  },
+  {
+    id: 'floral',
+    name: 'Floral',
+    look: 'Small coyote pup (~4 months). Bubbly, naturally stealthy.',
+    personality: 'Bubbly, talks in breathless run-on sentences, eager to learn crafting from Shiver.',
+    voice: 'High-speed, bubbly run-on sentences.',
+    role: 'Coyote Pup'
   }
 ];

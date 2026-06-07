@@ -96,6 +96,8 @@ export type GameSession = {
   turnOrder?: string[];
   currentTurnIndex?: number;
   phase?: 'initiative' | 'playing';
+  packHeart?: number;
+  suggestionsByPup?: Record<string, string[]>;
 };
 
 export type GameState = 'intro' | 'lobby' | 'selection' | 'playing';
