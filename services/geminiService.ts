@@ -2,9 +2,9 @@ import type { Message, Player } from '../src/types';
 import { CHARACTERS } from '../src/constants';
 
 const DEFAULT_WORKER_URL = 'https://husky-snow-ai.mholtkamp.workers.dev';
-const PRIMARY_MODEL = 'gemini-2.5-pro';
-const FALLBACK_MODEL = 'gemini-2.5-flash';
-const SUMMARIZER_MODEL = 'gemini-2.5-flash';
+const PRIMARY_MODEL = 'gemini-3.1-flash-lite';
+const FALLBACK_MODEL = 'gemini-3.1-flash-lite';
+const SUMMARIZER_MODEL = 'gemini-3.1-flash-lite';
 const HISTORY_THRESHOLD = 20;
 const RECENT_HISTORY_COUNT = 10;
 
