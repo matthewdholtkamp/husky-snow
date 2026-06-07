@@ -470,6 +470,68 @@ export default function App() {
           await handleProcessCommands(commands);
       }
 
+      // Advance turn index if we are in turn-based play mode
+      if (gameId) {
+        let currentOrder: string[] | undefined = undefined;
+        let currentIndex: number | undefined = undefined;
+        let currentPlayers: Player[] = [];
+
+        if (storageMode === 'local') {
+          const record = readLocalGame(gameId);
+          if (record) {
+            currentOrder = record.gameData.turnOrder;
+            currentIndex = record.gameData.currentTurnIndex;
+            currentPlayers = record.gameData.players;
+          }
+        } else {
+          const gameDocRef = doc(db, getGameDocPath(gameId));
+          const snap = await getDoc(gameDocRef);
+          if (snap.exists()) {
+            const data = snap.data() as GameSession;
+            currentOrder = data.turnOrder;
+            currentIndex = data.currentTurnIndex;
+            currentPlayers = data.players || [];
+          }
+        }
+
+        if (currentOrder && currentOrder.length > 1 && currentIndex !== undefined) {
+          let nextIndex = currentIndex;
+          let skippedPlayers: string[] = [];
+
+          for (let i = 0; i < currentOrder.length; i++) {
+            nextIndex = (nextIndex + 1) % currentOrder.length;
+            const nextPlayerName = currentOrder[nextIndex];
+            const player = currentPlayers.find(p => p.charName === nextPlayerName);
+            if (player && player.hp > 0) {
+              break;
+            } else if (player) {
+              skippedPlayers.push(nextPlayerName);
+            }
+          }
+
+          const updateData = {
+            currentTurnIndex: nextIndex
+          };
+
+          if (storageMode === 'local') {
+            const record = readLocalGame(gameId);
+            if (record) {
+              record.gameData = { ...record.gameData, ...updateData, lastActiveAt: Timestamp.now() };
+              writeLocalGame(gameId, record);
+              setGameData(record.gameData);
+              setLocalVersion((version) => version + 1);
+            }
+          } else {
+            const gameDocRef = doc(db, getGameDocPath(gameId));
+            await updateDoc(gameDocRef, { ...updateData, lastActiveAt: serverTimestamp() });
+          }
+
+          for (const skipped of skippedPlayers) {
+            await addMessageToDb('system', `⏭️ ${skipped} is downed — skipping their turn.`);
+          }
+        }
+      }
+
     } catch (err: unknown) {
       console.error("AI Response Error:", err);
       const message = err instanceof Error ? err.message : "Connection lost.";
@@ -481,6 +543,182 @@ export default function App() {
       setIsThinking(false);
     }
   }, [gameData, addMessageToDb, handleProcessCommands, storageMode, gameId]);
+
+  // --- Initiative Rolling Logic ---
+  const handleInitiativeRoll = async (result: number) => {
+    if (!user || !gameId || !gameData) return;
+
+    if (storageMode === 'local') {
+      const record = readLocalGame(gameId);
+      if (record) {
+        const updatedPlayers = record.gameData.players.map(p => {
+          if (p.userId === user.uid) {
+            return { ...p, initiativeRoll: result };
+          }
+          return p;
+        });
+        record.gameData = { ...record.gameData, players: updatedPlayers, lastActiveAt: Timestamp.now() };
+        writeLocalGame(gameId, record);
+        setGameData(record.gameData);
+        setLocalVersion((version) => version + 1);
+      }
+    } else {
+      const gameDocRef = doc(db, getGameDocPath(gameId));
+      await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(gameDocRef);
+        if (!snap.exists()) throw new Error("Game session not found");
+        const currentData = snap.data() as GameSession;
+        const nextPlayers = currentData.players.map(p => {
+          if (p.userId === user.uid) {
+            return { ...p, initiativeRoll: result };
+          }
+          return p;
+        });
+        transaction.update(gameDocRef, {
+          players: nextPlayers,
+          lastActiveAt: serverTimestamp()
+        });
+      });
+    }
+
+    const myPlayer = gameData.players.find(p => p.userId === user.uid);
+    const charName = myPlayer?.charName || 'Player';
+    await addMessageToDb('user', `*rolls initiative: ${result}*`, true, `Initiative: ${result}`, undefined, result, 0, result);
+  };
+
+  // --- Host Initiative & Turn Order Processing Effect ---
+  useEffect(() => {
+    if (playerRole !== 'host' || !gameId || !gameData) return;
+
+    const { players = [], phase = 'initiative', turnOrder = [], currentTurnIndex = 0 } = gameData;
+    if (players.length === 0) return;
+
+    if (phase === 'initiative') {
+      if (players.length === 1) {
+        // Single-player bypass: auto-resolve initiative phase immediately
+        const soloPlayer = players[0];
+        const updateData = {
+          phase: 'playing' as const,
+          turnOrder: [soloPlayer.charName],
+          currentTurnIndex: 0,
+        };
+
+        const updateGameDb = async () => {
+          if (storageMode === 'local') {
+            const record = readLocalGame(gameId);
+            if (record) {
+              record.gameData = { ...record.gameData, ...updateData, lastActiveAt: Timestamp.now() };
+              writeLocalGame(gameId, record);
+              setGameData(record.gameData);
+              setLocalVersion(v => v + 1);
+            }
+          } else {
+            const gameDocRef = doc(db, getGameDocPath(gameId));
+            await updateDoc(gameDocRef, { ...updateData, lastActiveAt: serverTimestamp() });
+          }
+
+          // Trigger initial AI narration if message log is empty
+          if (messages.length === 0) {
+            const dmInstruction = `INITIATE SESSION. The first player is ${soloPlayer.charName}. Starting Scene: ${soloPlayer.startingScene || 'river'}. You are starting Chapter 1: The Warning of Mist, with objective: "Investigate the Moonshine River and find out what is making the water sick." Ensure you begin with a [[SCENE: river]] command. Task: Narrate the scene. Add atmospheric details. End with: "What do you do?" and provide 3-4 suggestions.`;
+            await handleTriggerAIResponse([], dmInstruction, players);
+          }
+        };
+
+        updateGameDb().catch(err => console.error("Failed to bypass initiative for solo player:", err));
+        return;
+      }
+
+      // Check if all players have rolled
+      const allRolled = players.every(p => p.initiativeRoll !== undefined);
+      if (allRolled) {
+        // Sort players by initiativeRoll descending
+        const sorted = [...players].sort((a, b) => {
+          if (b.initiativeRoll! === a.initiativeRoll!) {
+            return a.charName.localeCompare(b.charName);
+          }
+          return b.initiativeRoll! - a.initiativeRoll!;
+        });
+        const order = sorted.map(p => p.charName);
+
+        const updateData = {
+          phase: 'playing' as const,
+          turnOrder: order,
+          currentTurnIndex: 0,
+        };
+
+        const updateGameDb = async () => {
+          if (storageMode === 'local') {
+            const record = readLocalGame(gameId);
+            if (record) {
+              record.gameData = { ...record.gameData, ...updateData, lastActiveAt: Timestamp.now() };
+              writeLocalGame(gameId, record);
+              setGameData(record.gameData);
+              setLocalVersion(v => v + 1);
+            }
+          } else {
+            const gameDocRef = doc(db, getGameDocPath(gameId));
+            await updateDoc(gameDocRef, { ...updateData, lastActiveAt: serverTimestamp() });
+          }
+
+          // Trigger initial AI narration if message log is empty
+          if (messages.length === 0) {
+            const firstChar = sorted[0];
+            const dmInstruction = `INITIATE SESSION. The first player is ${firstChar.charName}. Starting Scene: ${firstChar.startingScene || 'river'}. You are starting Chapter 1: The Warning of Mist, with objective: "Investigate the Moonshine River and find out what is making the water sick." Ensure you begin with a [[SCENE: river]] command. Task: Narrate the scene. Add atmospheric details. End with: "What do you do?" and provide 3-4 suggestions.`;
+            await handleTriggerAIResponse([], dmInstruction, players);
+          }
+        };
+
+        updateGameDb().catch(err => console.error("Failed to complete initiative phase:", err));
+      }
+    } else if (phase === 'playing') {
+      // Check for late joiners who have rolled but are not in turnOrder
+      const lateJoiners = players.filter(p => p.initiativeRoll !== undefined && !turnOrder.includes(p.charName));
+      if (lateJoiners.length > 0) {
+        // Save current active character name so we don't change their turn
+        const activeCharName = turnOrder[currentTurnIndex];
+
+        // Combine all players with rolls and sort
+        const rolledPlayers = players.filter(p => p.initiativeRoll !== undefined);
+        const sorted = [...rolledPlayers].sort((a, b) => {
+          if (b.initiativeRoll! === a.initiativeRoll!) {
+            return a.charName.localeCompare(b.charName);
+          }
+          return b.initiativeRoll! - a.initiativeRoll!;
+        });
+        const order = sorted.map(p => p.charName);
+
+        // Find the new index of the active player
+        let nextTurnIndex = 0;
+        if (activeCharName) {
+          nextTurnIndex = order.indexOf(activeCharName);
+          if (nextTurnIndex === -1) nextTurnIndex = 0;
+        }
+
+        const updateData = {
+          turnOrder: order,
+          currentTurnIndex: nextTurnIndex
+        };
+
+        const updateGameDb = async () => {
+          if (storageMode === 'local') {
+            const record = readLocalGame(gameId);
+            if (record) {
+              record.gameData = { ...record.gameData, ...updateData, lastActiveAt: Timestamp.now() };
+              writeLocalGame(gameId, record);
+              setGameData(record.gameData);
+              setLocalVersion(v => v + 1);
+            }
+          } else {
+            const gameDocRef = doc(db, getGameDocPath(gameId));
+            await updateDoc(gameDocRef, { ...updateData, lastActiveAt: serverTimestamp() });
+          }
+          await addMessageToDb('system', `Turn order updated: ${order.join(' → ')}`);
+        };
+
+        updateGameDb().catch(err => console.error("Failed to integrate late joiner turn order:", err));
+      }
+    }
+  }, [playerRole, gameId, gameData, storageMode, messages.length, handleTriggerAIResponse, addMessageToDb]);
 
   // --- Game Flow Functions ---
   const handleCreateGame = async () => {
@@ -500,7 +738,8 @@ export default function App() {
         chapterId: 'chapter_1',
         objective: 'Investigate the Moonshine River and find out what is making the water sick.',
         scene: 'river',
-        packWarmth: 100
+        packWarmth: 100,
+        phase: 'initiative'
       };
       const gameCollection = collection(db, getGameCollectionPath());
       const docRef = await addDoc(gameCollection, newGame);
@@ -525,7 +764,8 @@ export default function App() {
         chapterId: 'chapter_1',
         objective: 'Investigate the Moonshine River and find out what is making the water sick.',
         scene: 'river',
-        packWarmth: 100
+        packWarmth: 100,
+        phase: 'initiative'
       };
       writeLocalGame(localGameId, {
         gameData: localGameData,
@@ -637,11 +877,6 @@ export default function App() {
         setLocalVersion((version) => version + 1);
 
         await addMessageToDb('system', `${char.name} has joined the adventure!`);
-
-        if (wasFirstPlayer) {
-          const dmInstruction = `INITIATE SESSION. The first player is ${char.name}. Starting Scene: ${char.startingScene}. You are starting Chapter 1: The Warning of Mist, with objective: "Investigate the Moonshine River and find out what is making the water sick." Ensure you begin with a [[SCENE: river]] command. Task: Narrate the scene. Add atmospheric details. End with: "What do you do?" and provide 3-4 suggestions.`;
-          await handleTriggerAIResponse([], dmInstruction, updatedPlayers);
-        }
         return;
       }
 
@@ -676,11 +911,6 @@ export default function App() {
       });
       // Add system message for joining
       await addMessageToDb('system', `${char.name} has joined the adventure!`);
-      // Initial prompt for the very first player
-      if (wasFirstPlayer) {
-        const dmInstruction = `INITIATE SESSION. The first player is ${char.name}. Starting Scene: ${char.startingScene}. You are starting Chapter 1: The Warning of Mist, with objective: "Investigate the Moonshine River and find out what is making the water sick." Ensure you begin with a [[SCENE: river]] command. Task: Narrate the scene. Add atmospheric details. End with: "What do you do?" and provide 3-4 suggestions.`;
-        await handleTriggerAIResponse([], dmInstruction, updatedPlayers);
-      }
     } catch (err) {
       console.error("Failed to select character", err);
       const message = err instanceof Error && err.message === 'CHARACTER_TAKEN'
@@ -705,6 +935,14 @@ export default function App() {
   };
   
   const handleSend = async (text: string) => {
+    // Turn enforcement
+    if (gameData?.phase === 'playing' && gameData?.turnOrder && gameData.turnOrder.length > 1) {
+      const activeCharName = gameData.turnOrder[gameData.currentTurnIndex ?? 0];
+      if (selectedChar?.name !== activeCharName) {
+        console.warn("Turn enforcement: not your turn!");
+        return;
+      }
+    }
     await addMessageToDb('user', text);
     setSuggestions([]);
   };
@@ -718,6 +956,14 @@ export default function App() {
     rollModifier?: number,
     rollTotal?: number
   ) => {
+    // Turn enforcement
+    if (gameData?.phase === 'playing' && gameData?.turnOrder && gameData.turnOrder.length > 1) {
+      const activeCharName = gameData.turnOrder[gameData.currentTurnIndex ?? 0];
+      if (selectedChar?.name !== activeCharName) {
+        console.warn("Turn enforcement: not your turn!");
+        return;
+      }
+    }
     const result = forcedResult ?? Math.floor(Math.random() * 20) + 1;
     let outcome = forcedOutcome || "Failure";
     if (!forcedOutcome) {
@@ -1053,6 +1299,10 @@ export default function App() {
         onRetryChapter={handleRetryChapter}
         onUseAbility={handleUseAbility}
         onUseItem={handleUseItem}
+        phase={gameData.phase || 'initiative'}
+        turnOrder={gameData.turnOrder || []}
+        currentTurnIndex={gameData.currentTurnIndex ?? 0}
+        onInitiativeRoll={handleInitiativeRoll}
       />
     );
   }

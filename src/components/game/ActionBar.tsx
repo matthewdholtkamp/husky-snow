@@ -6,13 +6,15 @@ interface ActionBarProps {
   onAction: (action: string) => void;
   characterName: string;
   isThinking: boolean;
+  disabled?: boolean;
 }
 
 export const ActionBar: React.FC<ActionBarProps> = ({
   suggestions,
   onAction,
   characterName,
-  isThinking
+  isThinking,
+  disabled = false
 }) => {
 
   if (isThinking) {
@@ -51,19 +53,21 @@ export const ActionBar: React.FC<ActionBarProps> = ({
         {actionsToShow.map((text, idx) => (
           <motion.button
             key={idx}
-            onClick={() => onAction(text)}
+            onClick={() => !disabled && onAction(text)}
+            disabled={disabled}
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: idx * 0.1 }}
-            className="
-              px-4 py-3 bg-slate-900/40 hover:bg-white/10
-              border border-white/20 hover:border-white/40
-              backdrop-blur-md rounded-lg
-              text-sm text-slate-200 font-medium
+            className={`
+              px-4 py-3 bg-slate-900/40 rounded-lg
+              text-sm font-medium
               shadow-[0_4px_14px_0_rgba(0,0,0,0.2)]
-              transition-all active:scale-95
-              flex-grow md:flex-grow-0
-            "
+              transition-all flex-grow md:flex-grow-0
+              ${disabled 
+                ? 'opacity-40 border border-white/5 text-slate-500 cursor-not-allowed' 
+                : 'hover:bg-white/10 border border-white/20 hover:border-white/40 text-slate-200 active:scale-95'
+              }
+            `}
           >
             {text}
           </motion.button>
@@ -74,6 +78,7 @@ export const ActionBar: React.FC<ActionBarProps> = ({
       <form
         onSubmit={(e) => {
           e.preventDefault();
+          if (disabled) return;
           const form = e.currentTarget;
           const formData = new FormData(form);
           const input = String(formData.get('customAction') || '');
@@ -85,8 +90,15 @@ export const ActionBar: React.FC<ActionBarProps> = ({
         <input
           name="customAction"
           type="text"
-          placeholder={`What does ${characterName} do?`}
-          className="w-full bg-black/30 border border-white/10 rounded px-4 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-white/30 transition-colors"
+          disabled={disabled}
+          placeholder={disabled ? "⏳ Wait for your turn to act..." : `What does ${characterName} do?`}
+          className={`
+            w-full rounded px-4 py-2 text-sm transition-colors focus:outline-none
+            ${disabled 
+              ? 'bg-slate-950/20 border border-white/5 text-slate-500 placeholder-slate-600 cursor-not-allowed' 
+              : 'bg-black/30 border border-white/10 text-white placeholder-slate-500 focus:border-white/30'
+            }
+          `}
         />
       </form>
     </div>

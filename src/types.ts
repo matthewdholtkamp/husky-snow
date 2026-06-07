@@ -59,6 +59,7 @@ export type Player = {
   abilityCooldownChapter?: string;
   inventory?: InventoryItem[];
   badges?: Badge[];
+  initiativeRoll?: number;     // D20 initiative result
 };
 
 export type Message = {
@@ -92,6 +93,9 @@ export type GameSession = {
   objective: string;
   scene: string;
   packWarmth?: number;
+  turnOrder?: string[];
+  currentTurnIndex?: number;
+  phase?: 'initiative' | 'playing';
 };
 
 export type GameState = 'intro' | 'lobby' | 'selection' | 'playing';

@@ -23,6 +23,7 @@ import { SpiritCollection } from './game/SpiritCollection';
 import { TutorialOverlay } from './game/TutorialOverlay';
 import { Dice5, LogOut, RefreshCw, Heart, Star, Sparkles, Compass, HelpCircle, Volume2, VolumeX, Eye, EyeOff } from 'lucide-react';
 import { audioService } from '../../services/audioService';
+import { InitiativeOverlay } from './game/InitiativeOverlay';
 
 interface GameScreenProps {
   messages: Message[];
@@ -54,6 +55,10 @@ interface GameScreenProps {
   onRetryChapter: () => Promise<void>;
   onUseAbility: (charName: string) => Promise<void>;
   onUseItem?: (charName: string, itemId: string) => Promise<void>;
+  phase?: 'initiative' | 'playing';
+  turnOrder?: string[];
+  currentTurnIndex?: number;
+  onInitiativeRoll?: (result: number) => void;
 }
 
 export default function GameScreen({
@@ -77,7 +82,11 @@ export default function GameScreen({
   onUpdatePlayerHp,
   onRetryChapter,
   onUseAbility,
-  onUseItem
+  onUseItem,
+  phase = 'playing',
+  turnOrder = [],
+  currentTurnIndex = 0,
+  onInitiativeRoll
 }: GameScreenProps) {
 
   // Local State
@@ -100,6 +109,16 @@ export default function GameScreen({
   const [mistHint, setMistHint] = useState<string | null>(null);
   const [isAudioMuted, setIsAudioMuted] = useState(() => audioService.isMuted());
   const [reducedMotionSetting, setReducedMotionSetting] = useState(() => localStorage.getItem('husky-snow-reduced-motion') === 'true');
+
+  const myPlayer = players.find(p => p.charName === selectedChar.name);
+  const activePlayerName = (turnOrder && turnOrder.length > 0 && currentTurnIndex !== undefined && currentTurnIndex < turnOrder.length)
+    ? turnOrder[currentTurnIndex]
+    : null;
+  const isMyTurn = activePlayerName 
+    ? activePlayerName === selectedChar.name 
+    : true;
+  const showInitiativeOverlay = ((phase === 'initiative') || (phase === 'playing' && myPlayer && myPlayer.initiativeRoll === undefined && players.length > 1)) && !showTutorial;
+  const showTurnBanner = phase === 'playing' && turnOrder && turnOrder.length > 1;
 
   const prevRankRef = useRef<string | null>(null);
 
@@ -187,7 +206,6 @@ export default function GameScreen({
     return () => clearTimeout(idleTimeout);
   }, [messages.length, isThinking, showDice, chapterId, gameStatus, isDrawerOpen, showTutorial, showSpirits]);
 
-  const myPlayer = players?.find(p => p.charName === selectedChar.name);
   const myHp = myPlayer?.hp ?? 100;
   const isDowned = myHp === 0;
 
@@ -354,59 +372,90 @@ export default function GameScreen({
                  </div>
                )}
                <FrostContainer className="p-4" noBorder>
-                   {/* Ability Bar */}
-                   {!isDowned && (
-                      <div className="mb-4">
-                        <AbilityBar
-                          charId={selectedChar.id}
-                          cooldownChapter={myPlayer?.abilityCooldownChapter}
-                          currentChapterId={chapterId}
-                          onUseAbility={handleUseAbilityClick}
-                          disabled={isThinking}
-                        />
-                      </div>
-                   )}
+                    {/* Turn Status Banner */}
+                    {showTurnBanner && (
+                      isMyTurn ? (
+                        <div className="mb-4 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-lg px-4 py-2 text-sm font-semibold flex items-center gap-2 shadow-[0_0_15px_rgba(16,185,129,0.1)]">
+                          <span className="animate-pulse">🎯</span>
+                          <span>Your turn, {selectedChar.name}!</span>
+                        </div>
+                      ) : (
+                        <div className="mb-4 bg-slate-950/40 border border-white/5 text-slate-400 rounded-lg px-4 py-2 text-sm flex items-center gap-2">
+                          <span className="animate-pulse">⏳</span>
+                          <span>Waiting for {activePlayerName}'s turn...</span>
+                        </div>
+                      )
+                    )}
 
-                   {/* Cooperative multiplayer revive action */}
-                   {downedTeammate && !isDowned && (
-                      <button
-                        onClick={async () => {
-                          await onUpdatePlayerHp(downedTeammate.charName, 50);
-                          await onSendMessage(`spend my turn to revive my packmate ${downedTeammate.charName}!`);
-                        }}
-                        className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg shadow-lg shadow-emerald-500/30 mb-4 flex items-center justify-center gap-2 transition-all active:scale-95"
-                      >
-                        <Heart className="w-5 h-5 fill-white animate-pulse" /> Revive {downedTeammate.charName} (+50 HP)
-                      </button>
-                   )}
+                    {/* Ability Bar */}
+                    {!isDowned && (
+                       <div className="mb-4">
+                         <AbilityBar
+                           charId={selectedChar.id}
+                           cooldownChapter={myPlayer?.abilityCooldownChapter}
+                           currentChapterId={chapterId}
+                           onUseAbility={handleUseAbilityClick}
+                           disabled={isThinking || !isMyTurn}
+                         />
+                       </div>
+                    )}
 
-                   {/* Ignite Frost Crystal option */}
-                   {showIgniteButton && (
-                      <button
-                        onClick={() => setShowFinaleEditor(true)}
-                        className="w-full py-4 bg-gradient-to-r from-cyan-500 via-indigo-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-bold rounded-lg shadow-xl shadow-indigo-500/20 mb-4 flex items-center justify-center gap-2 transition-all hover:scale-[1.01] animate-pulse active:scale-95"
-                      >
-                        <Star className="w-5 h-5 fill-white" /> Ignite the Frost Crystal
-                      </button>
-                   )}
+                    {/* Cooperative multiplayer revive action */}
+                    {downedTeammate && !isDowned && (
+                       <button
+                         onClick={async () => {
+                           if (!isMyTurn) return;
+                           await onUpdatePlayerHp(downedTeammate.charName, 50);
+                           await onSendMessage(`spend my turn to revive my packmate ${downedTeammate.charName}!`);
+                         }}
+                         disabled={!isMyTurn}
+                         className={`w-full py-4 text-white font-bold rounded-lg shadow-lg mb-4 flex items-center justify-center gap-2 transition-all ${
+                           !isMyTurn 
+                             ? 'bg-slate-800 text-slate-500 border border-white/5 cursor-not-allowed shadow-none opacity-50' 
+                             : 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-500/30 active:scale-95'
+                         }`}
+                       >
+                         <Heart className={`w-5 h-5 fill-white ${isMyTurn ? 'animate-pulse' : ''}`} /> Revive {downedTeammate.charName} (+50 HP)
+                       </button>
+                    )}
 
-                   {/* If AI asks for roll, we could inject a special button here or relying on suggestions */}
-                   {canRoll && !isDowned && !showIgniteButton ? (
-                      <button
-                        onClick={triggerDice}
-                        disabled={showDice}
-                        className={`w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-lg shadow-lg shadow-indigo-500/30 mb-4 flex items-center justify-center gap-2 ${aiRequestedRoll ? 'animate-bounce' : ''}`}
-                      >
-                        <Dice5 className="w-5 h-5" /> Roll D20
-                      </button>
-                   ) : null}
+                    {/* Ignite Frost Crystal option */}
+                    {showIgniteButton && (
+                       <button
+                         onClick={() => isMyTurn && setShowFinaleEditor(true)}
+                         disabled={!isMyTurn}
+                         className={`w-full py-4 text-white font-bold rounded-lg shadow-xl mb-4 flex items-center justify-center gap-2 transition-all ${
+                           !isMyTurn 
+                             ? 'bg-slate-800 text-slate-500 border border-white/5 cursor-not-allowed shadow-none opacity-50' 
+                             : 'bg-gradient-to-r from-cyan-500 via-indigo-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 shadow-indigo-500/20 hover:scale-[1.01] animate-pulse active:scale-95'
+                         }`}
+                       >
+                         <Star className="w-5 h-5 fill-white" /> Ignite the Frost Crystal
+                       </button>
+                    )}
 
-                  <ActionBar
-                    suggestions={isDowned ? [] : suggestions}
-                    onAction={handleAction}
-                    characterName={selectedChar.name}
-                    isThinking={isThinking}
-                  />
+                    {/* If AI asks for roll, we could inject a special button here or relying on suggestions */}
+                    {canRoll && !isDowned && !showIgniteButton ? (
+                       <button
+                         onClick={triggerDice}
+                         disabled={showDice || !isMyTurn}
+                         className={`w-full py-4 text-white font-bold rounded-lg shadow-lg mb-4 flex items-center justify-center gap-2 transition-all ${
+                           !isMyTurn 
+                             ? 'bg-slate-800 text-slate-500 border border-white/5 cursor-not-allowed shadow-none opacity-50' 
+                             : 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-500/30 active:scale-[0.98]'
+                         } ${aiRequestedRoll && isMyTurn ? 'animate-bounce' : ''}`}
+                       >
+                         <Dice5 className="w-5 h-5" /> Roll D20
+                       </button>
+                    ) : null}
+
+                   <ActionBar
+                     suggestions={isDowned ? [] : suggestions}
+                     onAction={handleAction}
+                     characterName={selectedChar.name}
+                     isThinking={isThinking}
+                     disabled={!isMyTurn}
+                   />
                </FrostContainer>
              </div>
 
@@ -581,11 +630,11 @@ export default function GameScreen({
           item={activeItemToUse}
           onClose={() => setActiveItemToUse(null)}
           onUse={() => {
-            if (onUseItem) {
+            if (onUseItem && isMyTurn) {
               onUseItem(selectedChar.name, activeItemToUse.id);
             }
           }}
-          isDowned={isDowned || playerRole === 'spectator'}
+          isDowned={isDowned || playerRole === 'spectator' || !isMyTurn}
         />
       )}
 
@@ -636,6 +685,19 @@ export default function GameScreen({
             </button>
           </FrostContainer>
         </div>
+      )}
+
+      {/* Initiative Overlay */}
+      {showInitiativeOverlay && (
+        <InitiativeOverlay
+          players={players}
+          currentUserCharName={selectedChar.name}
+          onRoll={(result) => {
+            if (onInitiativeRoll) onInitiativeRoll(result);
+          }}
+          isSinglePlayer={players.length <= 1}
+          phase={phase}
+        />
       )}
 
     </div>
