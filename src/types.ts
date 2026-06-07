@@ -52,6 +52,11 @@ export interface Character {
 export type Player = {
   userId: string;
   charName: string;
+  hp: number;
+  maxHp: number;
+  xp?: number;
+  rank?: string;
+  abilityCooldownChapter?: string;
   inventory?: InventoryItem[];
   badges?: Badge[];
 };
@@ -64,6 +69,10 @@ export type Message = {
   userId?: string;
   isRoll?: boolean;
   rollOutcome?: string; // "Success" | "Failure" | "Critical Success" etc.
+  rollStat?: 'strength' | 'agility' | 'smart' | 'spirit';
+  rollRaw?: number;
+  rollModifier?: number;
+  rollTotal?: number;
   timestamp: Timestamp;
   suggestions?: string[];
 };
@@ -79,6 +88,10 @@ export type GameSession = {
   // Game state
   inventory: Record<string, InventoryItem[]>; // map charName -> items
   badges: Record<string, Badge[]>; // map charName -> badges
+  chapterId: string;
+  objective: string;
+  scene: string;
+  packWarmth?: number;
 };
 
 export type GameState = 'intro' | 'lobby' | 'selection' | 'playing';

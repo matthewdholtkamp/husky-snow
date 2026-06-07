@@ -4,9 +4,10 @@ import { FrostContainer } from '../ui/FrostContainer';
 
 interface InventoryGridProps {
   items: InventoryItem[];
+  onItemSelect?: (item: InventoryItem) => void;
 }
 
-export const InventoryGrid: React.FC<InventoryGridProps> = ({ items }) => {
+export const InventoryGrid: React.FC<InventoryGridProps> = ({ items, onItemSelect }) => {
   // Create a grid of fixed size (e.g., 9 slots)
   const slots = Array(9).fill(null).map((_, i) => items[i] || null);
 
@@ -19,6 +20,7 @@ export const InventoryGrid: React.FC<InventoryGridProps> = ({ items }) => {
         {slots.map((item, idx) => (
           <div
             key={idx}
+            onClick={() => item && onItemSelect && onItemSelect(item)}
             className="aspect-square bg-black/20 rounded border border-white/5 flex items-center justify-center relative group hover:bg-white/5 transition-colors cursor-pointer"
           >
             {item ? (

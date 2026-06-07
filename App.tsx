@@ -17,6 +17,9 @@ import { auth, db, getGameCollectionPath, getGameDocPath, getMessagesColPath } f
 import { generateAIResponse } from './services/geminiService';
 import { CHARACTERS, ITEMS_REGISTRY, BADGES_REGISTRY } from './src/constants';
 import type { GameState, Character, Player, Message, GameSession } from './src/types';
+import { getNextChapter } from './src/game/chapters';
+import { ABILITIES } from './src/game/magic';
+import { audioService } from './services/audioService';
 
 import IntroScreen from './components/IntroScreen';
 import LobbyScreen from './components/LobbyScreen';
@@ -222,7 +225,11 @@ export default function App() {
     role: Message['role'],
     text: string,
     isRoll = false,
-    rollOutcome?: string
+    rollOutcome?: string,
+    rollStat?: 'strength' | 'agility' | 'smart' | 'spirit',
+    rollRaw?: number,
+    rollModifier?: number,
+    rollTotal?: number
   ) => {
     if (!gameId || !user) return;
     const authorName = role === 'model' ? 'Quinn' : role === 'system' ? 'System' : (selectedChar?.name || 'Player');
@@ -233,6 +240,10 @@ export default function App() {
       userId: user.uid,
       isRoll,
       ...(rollOutcome ? { rollOutcome } : {}),
+      ...(rollStat ? { rollStat } : {}),
+      ...(rollRaw !== undefined ? { rollRaw } : {}),
+      ...(rollModifier !== undefined ? { rollModifier } : {}),
+      ...(rollTotal !== undefined ? { rollTotal } : {}),
     };
 
     if (storageMode === 'local') {
@@ -265,6 +276,7 @@ export default function App() {
       if (!gameId || !gameData) return;
 
       const updatedPlayers = [...gameData.players];
+      let sessionUpdates: Partial<GameSession> = {};
       let hasUpdates = false;
 
       for (const cmd of commands) {
@@ -280,8 +292,8 @@ export default function App() {
              const playerIdx = updatedPlayers.findIndex(p => p.charName === targetName);
 
              if (itemDef && playerIdx !== -1) {
-                const player = updatedPlayers[playerIdx];
-                const inventory = player.inventory || [];
+                const player = { ...updatedPlayers[playerIdx] };
+                const inventory = player.inventory ? [...player.inventory] : [];
                 const existingItem = inventory.find(i => i.id === itemId);
 
                 if (existingItem) {
@@ -290,6 +302,7 @@ export default function App() {
                     inventory.push({ ...itemDef, id: itemId, quantity: 1 });
                 }
                 player.inventory = inventory;
+                updatedPlayers[playerIdx] = player;
                 hasUpdates = true;
                 // Notify via system message
                 await addMessageToDb('system', `${targetName} received ${itemDef.name}.`);
@@ -297,20 +310,102 @@ export default function App() {
           }
 
           if (action === 'AWARD_BADGE' && args.length === 2) {
-              const [targetName, badgeId] = args;
-              const badgeDef = BADGES_REGISTRY[badgeId];
-              const playerIdx = updatedPlayers.findIndex(p => p.charName === targetName);
+               const [targetName, badgeId] = args;
+               const badgeDef = BADGES_REGISTRY[badgeId];
+               const playerIdx = updatedPlayers.findIndex(p => p.charName === targetName);
 
-              if (badgeDef && playerIdx !== -1) {
-                  const player = updatedPlayers[playerIdx];
-                  const badges = player.badges || [];
-                  if (!badges.find(b => b.id === badgeId)) {
-                      badges.push({ ...badgeDef, id: badgeId, earnedAt: Timestamp.now() });
-                      player.badges = badges;
-                      hasUpdates = true;
-                      await addMessageToDb('system', `✨ BADGE EARNED: ${targetName} - ${badgeDef.name} ✨`);
-                  }
-              }
+               if (badgeDef && playerIdx !== -1) {
+                   const player = { ...updatedPlayers[playerIdx] };
+                   const badges = player.badges ? [...player.badges] : [];
+                   if (!badges.find(b => b.id === badgeId)) {
+                       badges.push({ ...badgeDef, id: badgeId, earnedAt: Timestamp.now() });
+
+                       const currentXp = player.xp ?? 0;
+                       const newXp = currentXp + 100;
+                       let rank = 'Pup';
+                       if (newXp >= 300) rank = 'Pack Hero';
+                       else if (newXp >= 150) rank = 'Apprentice';
+                       else if (newXp >= 50) rank = 'Trainee';
+                       
+                       player.xp = newXp;
+                       player.rank = rank;
+                       player.badges = badges;
+                       updatedPlayers[playerIdx] = player;
+                       hasUpdates = true;
+                       await addMessageToDb('system', `✨ BADGE EARNED: ${targetName} - ${badgeDef.name} (+100 XP) ✨`);
+                   }
+               }
+          }
+
+          if (action === 'DAMAGE' && args.length === 2) {
+             const [targetName, amountStr] = args;
+             const amount = parseInt(amountStr, 10);
+             const playerIdx = updatedPlayers.findIndex(p => p.charName === targetName);
+
+             if (!isNaN(amount) && playerIdx !== -1) {
+                const player = { ...updatedPlayers[playerIdx] };
+                const oldHp = player.hp ?? 100;
+                player.hp = Math.max(0, oldHp - amount);
+                updatedPlayers[playerIdx] = player;
+                hasUpdates = true;
+                
+                await addMessageToDb('system', `💥 ${targetName} took ${amount} damage! (HP: ${player.hp}/${player.maxHp})`);
+                if (player.hp === 0) {
+                    await addMessageToDb('system', `⚠️ ${targetName} has been downed! They cannot act until revived by a packmate.`);
+                }
+             }
+          }
+
+          if (action === 'HEAL' && args.length === 2) {
+             const [targetName, amountStr] = args;
+             const amount = parseInt(amountStr, 10);
+             const playerIdx = updatedPlayers.findIndex(p => p.charName === targetName);
+
+             if (!isNaN(amount) && playerIdx !== -1) {
+                const player = { ...updatedPlayers[playerIdx] };
+                const oldHp = player.hp ?? 100;
+                player.hp = Math.min(player.maxHp || 100, oldHp + amount);
+                updatedPlayers[playerIdx] = player;
+                hasUpdates = true;
+                
+                await addMessageToDb('system', `💚 ${targetName} was healed for ${amount} HP! (HP: ${player.hp}/${player.maxHp})`);
+             }
+          }
+
+          if (action === 'COMPLETE_OBJECTIVE' && args.length === 1) {
+             const compChapterId = args[0];
+             const nextChap = getNextChapter(compChapterId);
+
+             // Award 50 XP to all active players
+             updatedPlayers.forEach(p => {
+               const currentXp = p.xp ?? 0;
+               const newXp = currentXp + 50;
+               let rank = 'Pup';
+               if (newXp >= 300) rank = 'Pack Hero';
+               else if (newXp >= 150) rank = 'Apprentice';
+               else if (newXp >= 50) rank = 'Trainee';
+               p.xp = newXp;
+               p.rank = rank;
+             });
+
+             if (nextChap) {
+                sessionUpdates.chapterId = nextChap.id;
+                sessionUpdates.objective = nextChap.objective;
+                sessionUpdates.scene = nextChap.sceneHint;
+                hasUpdates = true;
+                await addMessageToDb('system', `✦ Objective Met! Chapter complete. Starting ${nextChap.title}. (+50 XP for the pack) Objective: ${nextChap.objective}`);
+             } else {
+                sessionUpdates.status = 'ended';
+                hasUpdates = true;
+                await addMessageToDb('system', `👑 VICTORY! The Moonshine River Pack has restored the Frost Crystal and saved their home! (+50 XP for the pack)`);
+             }
+          }
+
+          if (action === 'SCENE' && args.length === 1) {
+             const newScene = args[0];
+             sessionUpdates.scene = newScene;
+             hasUpdates = true;
+             await addMessageToDb('system', `🗺️ The scene shifts to: ${newScene.toUpperCase()}`);
           }
       }
 
@@ -318,7 +413,12 @@ export default function App() {
           if (storageMode === 'local') {
               const record = readLocalGame(gameId);
               if (!record) return;
-              record.gameData = { ...record.gameData, players: updatedPlayers, lastActiveAt: Timestamp.now() };
+              record.gameData = { 
+                ...record.gameData, 
+                players: updatedPlayers, 
+                ...sessionUpdates,
+                lastActiveAt: Timestamp.now() 
+              };
               writeLocalGame(gameId, record);
               setGameData(record.gameData);
               setLocalVersion((version) => version + 1);
@@ -326,7 +426,11 @@ export default function App() {
           }
 
           const gameDocRef = doc(db, getGameDocPath(gameId));
-          await updateDoc(gameDocRef, { players: updatedPlayers, lastActiveAt: serverTimestamp() });
+          await updateDoc(gameDocRef, { 
+            players: updatedPlayers, 
+            ...sessionUpdates,
+            lastActiveAt: serverTimestamp() 
+          });
       }
 
   }, [gameId, gameData, addMessageToDb, storageMode]);
@@ -343,7 +447,13 @@ export default function App() {
     setLastPrompt(prompt);
     
     try {
-      const { narrative, suggestions: newSuggestions, commands } = await generateAIResponse(history, prompt, activePlayers);
+      const { narrative, suggestions: newSuggestions, commands } = await generateAIResponse(
+        history,
+        prompt,
+        activePlayers,
+        gameData?.chapterId,
+        gameData?.objective
+      );
       await addMessageToDb('model', narrative);
       setSuggestions(newSuggestions);
 
@@ -386,7 +496,11 @@ export default function App() {
         lastActiveAt: serverTimestamp() as Timestamp,
         status: 'active',
         inventory: {}, // Initialize empty
-        badges: {}     // Initialize empty
+        badges: {},    // Initialize empty
+        chapterId: 'chapter_1',
+        objective: 'Investigate the Moonshine River and find out what is making the water sick.',
+        scene: 'river',
+        packWarmth: 100
       };
       const gameCollection = collection(db, getGameCollectionPath());
       const docRef = await addDoc(gameCollection, newGame);
@@ -407,7 +521,11 @@ export default function App() {
         lastActiveAt: Timestamp.now(),
         status: 'active',
         inventory: {},
-        badges: {}
+        badges: {},
+        chapterId: 'chapter_1',
+        objective: 'Investigate the Moonshine River and find out what is making the water sick.',
+        scene: 'river',
+        packWarmth: 100
       };
       writeLocalGame(localGameId, {
         gameData: localGameData,
@@ -484,6 +602,10 @@ export default function App() {
       const player: Player = {
           userId: user.uid,
           charName: char.name,
+          hp: 100,
+          maxHp: 100,
+          xp: 0,
+          rank: 'Pup',
           inventory: [],
           badges: starterBadges
       };
@@ -517,7 +639,7 @@ export default function App() {
         await addMessageToDb('system', `${char.name} has joined the adventure!`);
 
         if (wasFirstPlayer) {
-          const dmInstruction = `INITIATE SESSION. The first player is ${char.name}. Starting Scene: ${char.startingScene}. Task: Narrate the scene. Add atmospheric details. End with: "What do you do?" and provide 3-4 suggestions.`;
+          const dmInstruction = `INITIATE SESSION. The first player is ${char.name}. Starting Scene: ${char.startingScene}. You are starting Chapter 1: The Warning of Mist, with objective: "Investigate the Moonshine River and find out what is making the water sick." Ensure you begin with a [[SCENE: river]] command. Task: Narrate the scene. Add atmospheric details. End with: "What do you do?" and provide 3-4 suggestions.`;
           await handleTriggerAIResponse([], dmInstruction, updatedPlayers);
         }
         return;
@@ -556,7 +678,7 @@ export default function App() {
       await addMessageToDb('system', `${char.name} has joined the adventure!`);
       // Initial prompt for the very first player
       if (wasFirstPlayer) {
-        const dmInstruction = `INITIATE SESSION. The first player is ${char.name}. Starting Scene: ${char.startingScene}. Task: Narrate the scene. Add atmospheric details. End with: "What do you do?" and provide 3-4 suggestions.`;
+        const dmInstruction = `INITIATE SESSION. The first player is ${char.name}. Starting Scene: ${char.startingScene}. You are starting Chapter 1: The Warning of Mist, with objective: "Investigate the Moonshine River and find out what is making the water sick." Ensure you begin with a [[SCENE: river]] command. Task: Narrate the scene. Add atmospheric details. End with: "What do you do?" and provide 3-4 suggestions.`;
         await handleTriggerAIResponse([], dmInstruction, updatedPlayers);
       }
     } catch (err) {
@@ -587,8 +709,15 @@ export default function App() {
     setSuggestions([]);
   };
   
-  const handleRoll = async (forcedResult?: number, forcedOutcome?: string, forcedRollText?: string) => {
-    // Legacy support, now handled in GameScreen mostly
+  const handleRoll = async (
+    forcedResult?: number,
+    forcedOutcome?: string,
+    forcedRollText?: string,
+    rollStat?: 'strength' | 'agility' | 'smart' | 'spirit',
+    rollRaw?: number,
+    rollModifier?: number,
+    rollTotal?: number
+  ) => {
     const result = forcedResult ?? Math.floor(Math.random() * 20) + 1;
     let outcome = forcedOutcome || "Failure";
     if (!forcedOutcome) {
@@ -596,10 +725,214 @@ export default function App() {
       else if (result > 10) outcome = "Success";
       else if (result === 1) outcome = "Critical Fail!";
     }
-    const rollText = forcedRollText || `*Rolls D20... Result: ${result}* (${outcome})`;
-    await addMessageToDb('user', rollText, true, outcome);
+
+    // Determine XP reward based on outcome
+    let xpEarned = 3;
+    if (outcome.includes("Critical Success")) xpEarned = 25;
+    else if (outcome.includes("Success")) xpEarned = 12;
+    else if (outcome.includes("Critical Fail")) xpEarned = 5;
+
+    // Apply XP to current character
+    if (selectedChar && gameData && gameId) {
+      const updatedPlayers = gameData.players.map(p => {
+        if (p.charName === selectedChar.name) {
+          const currentXp = p.xp ?? 0;
+          const newXp = currentXp + xpEarned;
+          
+          let rank = 'Pup';
+          if (newXp >= 300) rank = 'Pack Hero';
+          else if (newXp >= 150) rank = 'Apprentice';
+          else if (newXp >= 50) rank = 'Trainee';
+
+          return { ...p, xp: newXp, rank };
+        }
+        return p;
+      });
+
+      // Write updates
+      if (storageMode === 'local') {
+        const record = readLocalGame(gameId);
+        if (record) {
+          record.gameData = { ...record.gameData, players: updatedPlayers, lastActiveAt: Timestamp.now() };
+          writeLocalGame(gameId, record);
+          setGameData(record.gameData);
+          setLocalVersion((version) => version + 1);
+        }
+      } else {
+        const gameDocRef = doc(db, getGameDocPath(gameId));
+        await updateDoc(gameDocRef, { players: updatedPlayers, lastActiveAt: serverTimestamp() });
+      }
+    }
+
+    const rollText = forcedRollText || `*Rolls D20: ${result}* (${outcome}) (+${xpEarned} XP)`;
+    await addMessageToDb('user', rollText, true, outcome, rollStat, rollRaw, rollModifier, rollTotal);
     setSuggestions([]);
   };
+
+  const handleUpdatePlayerHp = useCallback(async (charName: string, amount: number) => {
+    if (!gameId || !gameData) return;
+    const updatedPlayers = gameData.players.map(p => {
+      if (p.charName === charName) {
+        const newHp = Math.max(0, Math.min(p.maxHp || 100, (p.hp ?? 100) + amount));
+        return { ...p, hp: newHp };
+      }
+      return p;
+    });
+
+    if (storageMode === 'local') {
+      const record = readLocalGame(gameId);
+      if (!record) return;
+      record.gameData = { ...record.gameData, players: updatedPlayers, lastActiveAt: Timestamp.now() };
+      writeLocalGame(gameId, record);
+      setGameData(record.gameData);
+      setLocalVersion((version) => version + 1);
+      return;
+    }
+
+    const gameDocRef = doc(db, getGameDocPath(gameId));
+    await updateDoc(gameDocRef, { players: updatedPlayers, lastActiveAt: serverTimestamp() });
+  }, [gameId, gameData, storageMode]);
+
+  const handleRetryChapter = useCallback(async () => {
+    if (!gameId || !gameData) return;
+    const updatedPlayers = gameData.players.map(p => ({ ...p, hp: 100 }));
+    
+    await addMessageToDb('system', `🔄 Retry! The pack gathers their strength and retries the chapter.`);
+
+    if (storageMode === 'local') {
+      const record = readLocalGame(gameId);
+      if (!record) return;
+      record.gameData = { ...record.gameData, players: updatedPlayers, lastActiveAt: Timestamp.now() };
+      writeLocalGame(gameId, record);
+      setGameData(record.gameData);
+      setLocalVersion((version) => version + 1);
+      return;
+    }
+
+    const gameDocRef = doc(db, getGameDocPath(gameId));
+    await updateDoc(gameDocRef, { players: updatedPlayers, lastActiveAt: serverTimestamp() });
+  }, [gameId, gameData, addMessageToDb, storageMode]);
+
+  const handleUseAbility = useCallback(async (charName: string) => {
+    if (!gameId || !gameData) return;
+    
+    const charKey = charName.toLowerCase();
+    const ability = ABILITIES[charKey];
+    if (!ability) return;
+
+    // 1. Update player list with cooldown
+    const updatedPlayers = gameData.players.map(p => {
+      if (p.charName === charName) {
+        return { ...p, abilityCooldownChapter: gameData.chapterId };
+      }
+      return p;
+    });
+
+    // 2. Perform mechanical healing effect
+    let systemNotice = `✨ Spirit Surge cast: ${charName} used ${ability.name}!`;
+    if (ability.type === 'heal') {
+      updatedPlayers.forEach(p => {
+        p.hp = Math.min(p.maxHp || 100, (p.hp ?? 100) + 25);
+      });
+      systemNotice += ` All packmates were healed by 25 HP!`;
+    }
+
+    // 3. Write updates to DB
+    if (storageMode === 'local') {
+      const record = readLocalGame(gameId);
+      if (!record) return;
+      record.gameData = { ...record.gameData, players: updatedPlayers, lastActiveAt: Timestamp.now() };
+      writeLocalGame(gameId, record);
+      setGameData(record.gameData);
+      setLocalVersion((version) => version + 1);
+    } else {
+      const gameDocRef = doc(db, getGameDocPath(gameId));
+      await updateDoc(gameDocRef, { players: updatedPlayers, lastActiveAt: serverTimestamp() });
+    }
+
+    // 4. Send system message and trigger AI response
+    await addMessageToDb('system', systemNotice);
+    
+    // Send prompt to AI
+    const surgePrompt = `[SPIRIT SURGE TRIGGERED] ${ability.promptTemplate} The player has activated this magic. Please narrate the spectacular visual effect in the current environment and how it impacts the scene.`;
+    await handleTriggerAIResponse(messages, surgePrompt, updatedPlayers);
+  }, [gameId, gameData, messages, addMessageToDb, handleTriggerAIResponse, storageMode]);
+
+  const handleUseItem = useCallback(async (charName: string, itemId: string) => {
+    if (!gameId || !gameData) return;
+
+    let healedAmount = 0;
+    let usedItemName = '';
+    let itemEffectText = '';
+
+    const updatedPlayers = gameData.players.map(p => {
+      if (p.charName === charName) {
+        const inventory = p.inventory ? [...p.inventory] : [];
+        const itemIdx = inventory.findIndex(i => i.id === itemId);
+        if (itemIdx === -1) return p;
+
+        const item = { ...inventory[itemIdx] };
+        usedItemName = item.name;
+        itemEffectText = item.effect || '';
+
+        // Decrement quantity or remove
+        if (item.quantity > 1) {
+          item.quantity -= 1;
+          inventory[itemIdx] = item;
+        } else {
+          inventory.splice(itemIdx, 1);
+        }
+
+        // Apply health effect if applicable
+        let currentHp = p.hp ?? 100;
+        if (itemId === 'aloe') {
+          healedAmount = 5;
+          currentHp = Math.min(p.maxHp || 100, currentHp + 5);
+        } else if (itemId === 'berry') {
+          healedAmount = 3;
+          currentHp = Math.min(p.maxHp || 100, currentHp + 3);
+        }
+
+        return { ...p, inventory, hp: currentHp };
+      }
+      return p;
+    });
+
+    if (usedItemName === '') return; // Item not found or not owned
+
+    // Write database / local storage update
+    if (storageMode === 'local') {
+      const record = readLocalGame(gameId);
+      if (!record) return;
+      record.gameData = { ...record.gameData, players: updatedPlayers, lastActiveAt: Timestamp.now() };
+      writeLocalGame(gameId, record);
+      setGameData(record.gameData);
+      setLocalVersion((version) => version + 1);
+    } else {
+      const gameDocRef = doc(db, getGameDocPath(gameId));
+      await updateDoc(gameDocRef, { players: updatedPlayers, lastActiveAt: serverTimestamp() });
+    }
+
+    // Play synthesized sound effect!
+    if (healedAmount > 0) {
+      audioService.playChime();
+    } else {
+      audioService.playClick();
+    }
+
+    // Post message
+    const msgText = healedAmount > 0 
+      ? `💚 ${charName} used ${usedItemName} and recovered ${healedAmount} HP! (HP: ${updatedPlayers.find(p => p.charName === charName)?.hp}/${updatedPlayers.find(p => p.charName === charName)?.maxHp})`
+      : `🔧 ${charName} used ${usedItemName}: "${itemEffectText || 'Used item'}"`;
+    
+    await addMessageToDb('system', msgText);
+
+    // If it's a narrative item (not just healing, or even if healing but has potential narrative context), trigger AI narration!
+    if (itemId !== 'aloe' && itemId !== 'berry') {
+      const itemPrompt = `[ITEM USE] ${charName} has used their ${usedItemName} (Effect: ${itemEffectText}). Please narrate how this item is used in the current scene and its immediate outcome.`;
+      await handleTriggerAIResponse(messages, itemPrompt, updatedPlayers);
+    }
+  }, [gameId, gameData, messages, addMessageToDb, handleTriggerAIResponse, storageMode]);
   
   const retryLastAction = async () => {
      if (lastPrompt) {
@@ -711,6 +1044,15 @@ export default function App() {
         players={gameData.players}
         playerRole={playerRole}
         modeNotice={localModeNotice}
+        chapterId={gameData.chapterId || 'chapter_1'}
+        objective={gameData.objective || 'Investigate the Moonshine River and find out what is making the water sick.'}
+        scene={gameData.scene || 'river'}
+        packWarmth={gameData.packWarmth ?? 100}
+        gameStatus={gameData.status || 'active'}
+        onUpdatePlayerHp={handleUpdatePlayerHp}
+        onRetryChapter={handleRetryChapter}
+        onUseAbility={handleUseAbility}
+        onUseItem={handleUseItem}
       />
     );
   }

@@ -2,6 +2,7 @@ import React, { useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Message } from '../../types';
 import { FrostContainer } from '../ui/FrostContainer';
+import { Typewriter } from '../effects/Typewriter';
 
 interface MessageLogProps {
   messages: Message[];
@@ -22,7 +23,11 @@ export const MessageLog: React.FC<MessageLogProps> = ({ messages }) => {
     >
       <div className="flex-1 min-h-4" /> {/* Spacer to push messages down initially */}
 
-      <div className="flex flex-col gap-4 md:gap-6">
+      <div 
+        className="flex flex-col gap-4 md:gap-6"
+        role="log"
+        aria-live="polite"
+      >
         {messages.map((msg, idx) => {
           const isUser = msg.role === 'user';
           const isSystem = msg.role === 'system';
@@ -57,6 +62,8 @@ export const MessageLog: React.FC<MessageLogProps> = ({ messages }) => {
             );
           }
 
+          const isLatest = idx === messages.length - 1;
+
           return (
             <motion.div
               key={msg.id || idx}
@@ -78,13 +85,13 @@ export const MessageLog: React.FC<MessageLogProps> = ({ messages }) => {
                    : 'bg-black/40 text-slate-200 rounded-bl-none border border-white/10 backdrop-blur-md'
                  }
                `}>
-                 {isModel ? (
-                   // Simple Fade-in line by line effect could be complex, sticking to simple render for now
-                   // or we can use a library, but let's keep it simple text for robustness.
-                   // The request asked for "Text should fade in character-by-character".
-                   // Doing that properly requires a Typewriter component.
-                   // For now, let's just fade the block in.
-                   <div className="whitespace-pre-wrap">{msg.text}</div>
+                 {isModel && isLatest ? (
+                   <Typewriter 
+                     text={msg.text} 
+                     onComplete={() => {
+                       bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+                     }}
+                   />
                  ) : (
                    <div className="whitespace-pre-wrap">{msg.text}</div>
                  )}

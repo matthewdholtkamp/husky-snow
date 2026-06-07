@@ -15,6 +15,7 @@ export const CharacterSheet: React.FC<CharacterSheetProps> = ({
   earnedBadges = [],
   health = 100
 }) => {
+  const [isBouncing, setIsBouncing] = React.useState(false);
 
   // Combine starter badges with earned ones
   const allBadges = [
@@ -28,12 +29,46 @@ export const CharacterSheet: React.FC<CharacterSheetProps> = ({
     <FrostContainer className="p-4 w-full h-full flex flex-col gap-4">
       {/* Header */}
       <div className="flex items-center gap-3 border-b border-white/10 pb-3">
-        <div className={`p-2 rounded-lg ${character.color} bg-opacity-20 backdrop-blur-md border border-white/20`}>
+        <div 
+          onClick={() => {
+            setIsBouncing(true);
+            setTimeout(() => setIsBouncing(false), 600);
+            import('../../../services/audioService').then(({ audioService }) => {
+              audioService.playClick();
+            });
+          }}
+          className={`p-2 rounded-lg ${character.color} bg-opacity-20 backdrop-blur-md border border-white/20 cursor-pointer select-none transition-transform duration-300 ${
+            isBouncing ? 'scale-125 -translate-y-1.5 rotate-3' : 'hover:scale-105 active:scale-95'
+          }`}
+          title={`Pet ${character.name}!`}
+        >
           <character.icon className="w-6 h-6 text-white" />
         </div>
         <div>
           <h2 className="text-xl font-serif text-white tracking-wide">{character.name}</h2>
           <p className="text-xs text-slate-300 font-light uppercase tracking-wider">{character.role}</p>
+        </div>
+      </div>
+
+      {/* HP Bar */}
+      <div className="flex flex-col gap-1 px-1">
+        <div className="flex justify-between items-center text-[10px] tracking-wider font-extrabold text-slate-400">
+          <span>HEALTH (HP)</span>
+          <span className={`${health === 0 ? 'text-red-500 animate-pulse' : 'text-white'}`}>
+            {health === 0 ? 'DOWNED' : `${health} / 100`}
+          </span>
+        </div>
+        <div className="w-full h-3.5 bg-slate-950/60 border border-white/10 rounded-full overflow-hidden p-[2px]">
+          <div 
+            className={`h-full rounded-full transition-all duration-500 ${
+              health > 50 
+                ? 'bg-gradient-to-r from-emerald-500 to-green-400 shadow-[0_0_10px_rgba(16,185,129,0.4)]' 
+                : health > 20 
+                ? 'bg-gradient-to-r from-amber-500 to-yellow-400 shadow-[0_0_10px_rgba(245,158,11,0.4)]' 
+                : 'bg-gradient-to-r from-red-600 to-rose-500 shadow-[0_0_10px_rgba(220,38,38,0.4)]'
+            }`}
+            style={{ width: `${health}%` }}
+          />
         </div>
       </div>
 

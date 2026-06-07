@@ -19,7 +19,11 @@ service cloud.firestore {
         'lastActiveAt',
         'status',
         'inventory',
-        'badges'
+        'badges',
+        'chapterId',
+        'objective',
+        'scene',
+        'packWarmth'
       ]);
     }
 
@@ -31,6 +35,10 @@ service cloud.firestore {
         'userId',
         'isRoll',
         'rollOutcome',
+        'rollStat',
+        'rollRaw',
+        'rollModifier',
+        'rollTotal',
         'timestamp'
       ]);
     }

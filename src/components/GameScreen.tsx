@@ -1,5 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { Message, Character, Player, InventoryItem, Badge } from '../../src/types';
+import { parseRollRequest, getModifier, getRollOutcome, REVERSE_STAT_MAP } from '../../src/game/rolls';
+import { getChapter } from '../../src/game/chapters';
+import { ABILITIES } from '../../src/game/magic';
 
 // UI Components
 import { BackgroundLayer } from './ui/BackgroundLayer';
@@ -10,7 +13,16 @@ import { MessageLog } from './game/MessageLog';
 import { ActionBar } from './game/ActionBar';
 import { Dice3D } from './effects/Dice3D';
 import { ScreenShake } from './effects/ScreenShake';
-import { Dice5, LogOut, RefreshCw } from 'lucide-react';
+import { ObjectiveTracker } from './game/ObjectiveTracker';
+import { AbilityBar } from './game/AbilityBar';
+import { MagicBurst, VFXType } from './effects/MagicBurst';
+import { PartyStatus } from './game/PartyStatus';
+import { BottomSheet } from './game/BottomSheet';
+import { ItemUseMenu } from './game/ItemUseMenu';
+import { SpiritCollection } from './game/SpiritCollection';
+import { TutorialOverlay } from './game/TutorialOverlay';
+import { Dice5, LogOut, RefreshCw, Heart, Star, Sparkles, Compass, HelpCircle, Volume2, VolumeX, Eye, EyeOff } from 'lucide-react';
+import { audioService } from '../../services/audioService';
 
 interface GameScreenProps {
   messages: Message[];
@@ -18,13 +30,30 @@ interface GameScreenProps {
   suggestions: string[];
   isThinking: boolean;
   onSendMessage: (text: string) => Promise<void>;
-  onRoll: (result?: number, outcome?: string, rollText?: string) => Promise<void>;
+  onRoll: (
+    result?: number,
+    outcome?: string,
+    rollText?: string,
+    rollStat?: 'strength' | 'agility' | 'smart' | 'spirit',
+    rollRaw?: number,
+    rollModifier?: number,
+    rollTotal?: number
+  ) => Promise<void>;
   onLeaveGame: () => void;
   onRetry: () => void;
   gameId: string | null;
   players: Player[];
   playerRole: 'host' | 'player' | 'spectator';
   modeNotice?: string | null;
+  chapterId: string;
+  objective: string;
+  scene: string;
+  packWarmth: number;
+  gameStatus: 'active' | 'ended';
+  onUpdatePlayerHp: (charName: string, amount: number) => Promise<void>;
+  onRetryChapter: () => Promise<void>;
+  onUseAbility: (charName: string) => Promise<void>;
+  onUseItem?: (charName: string, itemId: string) => Promise<void>;
 }
 
 export default function GameScreen({
@@ -39,7 +68,16 @@ export default function GameScreen({
   gameId,
   players,
   playerRole,
-  modeNotice
+  modeNotice,
+  chapterId,
+  objective,
+  scene,
+  packWarmth,
+  gameStatus,
+  onUpdatePlayerHp,
+  onRetryChapter,
+  onUseAbility,
+  onUseItem
 }: GameScreenProps) {
 
   // Local State
@@ -47,6 +85,36 @@ export default function GameScreen({
   const [shakeTrigger, setShakeTrigger] = useState(false);
   const [localInventory, setLocalInventory] = useState<InventoryItem[]>([]);
   const [localBadges, setLocalBadges] = useState<Badge[]>([]);
+  const [magicTrigger, setMagicTrigger] = useState(0);
+  const [magicVfxType, setMagicVfxType] = useState<VFXType>('blue_orbs');
+  const [showFinaleEditor, setShowFinaleEditor] = useState(false);
+  const [finaleChoice, setFinaleChoice] = useState<'light' | 'dark' | null>(null);
+  const [endingText, setEndingText] = useState('');
+  const [activeItemToUse, setActiveItemToUse] = useState<InventoryItem | null>(null);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [showSpirits, setShowSpirits] = useState(false);
+  const [showTutorial, setShowTutorial] = useState(() => {
+    return localStorage.getItem('husky-snow-tutorial-completed') !== 'true';
+  });
+  const [showLevelUpRank, setShowLevelUpRank] = useState<string | null>(null);
+  const [mistHint, setMistHint] = useState<string | null>(null);
+  const [isAudioMuted, setIsAudioMuted] = useState(() => audioService.isMuted());
+  const [reducedMotionSetting, setReducedMotionSetting] = useState(() => localStorage.getItem('husky-snow-reduced-motion') === 'true');
+
+  const prevRankRef = useRef<string | null>(null);
+
+  const toggleMute = () => {
+    const newVal = !isAudioMuted;
+    audioService.setMuted(newVal);
+    setIsAudioMuted(newVal);
+  };
+
+  const toggleMotion = () => {
+    const newVal = !reducedMotionSetting;
+    setReducedMotionSetting(newVal);
+    localStorage.setItem('husky-snow-reduced-motion', String(newVal));
+    window.dispatchEvent(new Event('husky-snow-settings-changed'));
+  };
 
   // Sync Inventory/Badges from Players List
   useEffect(() => {
@@ -58,6 +126,86 @@ export default function GameScreen({
     }
   }, [players, selectedChar.name]);
 
+  // Level Up / Rank Up Notification Effect
+  useEffect(() => {
+    if (!players || !selectedChar) return;
+    const myPlayer = players.find(p => p.charName === selectedChar.name);
+    if (!myPlayer) return;
+
+    const currentRank = myPlayer.rank || 'Pup';
+    
+    // Initialize or check if rank increased
+    if (prevRankRef.current !== null && prevRankRef.current !== currentRank) {
+      // Rank has changed! Show level up popup and play chime
+      setShowLevelUpRank(currentRank);
+      audioService.playFanfare();
+    }
+    
+    prevRankRef.current = currentRank;
+  }, [players, selectedChar]);
+
+  // Mist Idle Hint System (30 seconds idle trigger)
+  useEffect(() => {
+    if (isThinking || showDice || gameStatus === 'ended' || isDrawerOpen || showTutorial || showSpirits) return;
+
+    const idleTimeout = setTimeout(() => {
+      let hint = "Listen to the wind. What will you do next?";
+      switch (chapterId) {
+        case 'chapter_1':
+          hint = "Mist whispers: 'Look closely at the river. A D20 roll might reveal what is poisoning the water.'";
+          break;
+        case 'chapter_2':
+          hint = "Mist whispers: 'Go speak with Starwhirl back at camp. He knows of the ancient prophecy.'";
+          break;
+        case 'chapter_3':
+          hint = "Mist whispers: 'The elders are alert. An Agility roll could help you sneak past camp boundary unnoticed.'";
+          break;
+        case 'chapter_4':
+          hint = "Mist whispers: 'Watch the road edges. Search for a hidden route around the coyote pack.'";
+          break;
+        case 'chapter_5':
+          hint = "Mist whispers: 'Confronting them directly is dangerous. Perhaps use a trap or sneak around.'";
+          break;
+        case 'chapter_6':
+          hint = "Mist whispers: 'Focus your spirit. Connect with the ancient dreams of the Dreamlands.'";
+          break;
+        case 'chapter_7':
+          hint = "Mist whispers: 'The Frost Crystal is before you. Ignite it to make your choice.'";
+          break;
+      }
+      setMistHint(hint);
+      
+      // Auto-dismiss after 8 seconds
+      const dismissTimeout = setTimeout(() => {
+        setMistHint(null);
+      }, 8000);
+
+      return () => clearTimeout(dismissTimeout);
+
+    }, 30000); // 30 seconds idle
+
+    return () => clearTimeout(idleTimeout);
+  }, [messages.length, isThinking, showDice, chapterId, gameStatus, isDrawerOpen, showTutorial, showSpirits]);
+
+  const myPlayer = players?.find(p => p.charName === selectedChar.name);
+  const myHp = myPlayer?.hp ?? 100;
+  const isDowned = myHp === 0;
+
+  const downedTeammate = players?.find(p => p.hp === 0 && p.charName !== selectedChar.name);
+  const isMultiplayer = players?.length > 1;
+
+  const currentChapterDef = getChapter(chapterId);
+  const chapterTitle = currentChapterDef ? currentChapterDef.title : `Chapter ${chapterId}`;
+
+  const hasCrystal = localInventory.some(item => item.id === 'crystal' && item.quantity > 0);
+  const showIgniteButton = chapterId === 'chapter_7' && hasCrystal && gameStatus !== 'ended' && !showFinaleEditor;
+
+  // Determine if there is an active stat roll requested by the AI
+  const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+  const activeStatKey = lastMessage ? parseRollRequest(lastMessage.text) : null;
+  const activeModifier = activeStatKey ? getModifier(selectedChar.stats[activeStatKey]) : 0;
+  const activeStatAbbr = activeStatKey ? REVERSE_STAT_MAP[activeStatKey] : '';
+
 
   // --- Action Handlers ---
 
@@ -65,21 +213,39 @@ export default function GameScreen({
     await onSendMessage(actionText);
   };
 
+  const handleUseAbilityClick = async () => {
+    const ability = ABILITIES[selectedChar.id.toLowerCase()];
+    if (!ability) return;
+
+    setMagicVfxType(ability.vfxType);
+    setMagicTrigger(prev => prev + 1);
+    await onUseAbility(selectedChar.name);
+  };
+
   const handleRollComplete = async (result: number) => {
     setShowDice(false);
 
-    // Determine outcome
-    let outcome = "Failure";
-    if (result > 15) outcome = "Critical Success!";
-    else if (result > 10) outcome = "Success";
-    else if (result === 1) outcome = "Critical Fail!";
+    const total = result + activeModifier;
+    const outcome = getRollOutcome(total, result);
 
-    const rollText = `*Rolls D20... Result: ${result}* (${outcome})`;
+    let rollText = '';
+    if (activeStatKey) {
+      const sign = activeModifier >= 0 ? '+' : '-';
+      rollText = `*Rolls D20: ${result} ${sign}${activeStatAbbr}(${Math.abs(activeModifier)}) = ${total} → ${outcome}!*`;
+    } else {
+      rollText = `*Rolls D20: ${result} = ${total} → ${outcome}!*`;
+    }
 
-    await onRoll(result, outcome, rollText);
+    await onRoll(result, outcome, rollText, activeStatKey || undefined, result, activeModifier, total);
 
-    // Trigger Screen Shake on low rolls (damage implication)
-    if (result <= 5) {
+    // Trigger critical success gold burst VFX
+    if (result === 20) {
+      setMagicVfxType('crit_gold');
+      setMagicTrigger(prev => prev + 1);
+    }
+
+    // Trigger Screen Shake on low rolls (damage implication or critical fumbles)
+    if (result === 1 || total <= 5) {
       setShakeTrigger(true);
       setTimeout(() => setShakeTrigger(false), 500);
     }
@@ -95,19 +261,20 @@ export default function GameScreen({
 
   return (
     <div className="relative w-full h-screen overflow-hidden font-sans text-slate-200">
-      <BackgroundLayer scene="default" />
+      <BackgroundLayer scene={scene} />
 
       <ScreenShake trigger={shakeTrigger}>
         <div className="relative z-10 w-full h-full min-h-0 box-border flex flex-col md:flex-row p-3 md:p-4 gap-3 md:gap-4">
 
           {/* LEFT COLUMN: Character & Stats (Hidden on mobile, drawer optional?) */}
-          <div className="hidden md:flex w-1/4 min-h-0 flex-col gap-4">
-             <CharacterSheet character={selectedChar} earnedBadges={localBadges} />
-             <InventoryGrid items={localInventory} />
+          <div className="hidden md:flex w-1/4 min-h-0 flex-col gap-4 overflow-y-auto custom-scrollbar pr-1 shrink-0">
+             <CharacterSheet character={selectedChar} earnedBadges={localBadges} health={myHp} />
+             <InventoryGrid items={localInventory} onItemSelect={(item) => setActiveItemToUse(item)} />
+             <PartyStatus players={players} localPlayerCharName={selectedChar.name} />
           </div>
 
           {/* CENTER: Main Game Area */}
-          <div className="flex-1 h-full min-h-0 flex flex-col gap-3 md:gap-4 min-w-0">
+          <div className="flex-1 h-full min-h-0 flex flex-col gap-3 md:gap-4 min-w-0 relative">
              {/* Header */}
              <div className="shrink-0 flex justify-between items-center bg-black/40 backdrop-blur-md p-3 rounded-xl border border-white/10">
                 <div className="min-w-0">
@@ -117,6 +284,18 @@ export default function GameScreen({
                   {gameId && <p className="text-[10px] text-slate-500 font-mono truncate">Game {gameId.slice(0, 12)}</p>}
                 </div>
                 <div className="flex gap-2">
+                   <button onClick={() => setShowSpirits(true)} className="p-2 hover:bg-white/10 rounded-full transition-colors text-indigo-400" title="View Spirit Collection">
+                     <Compass className="w-4 h-4" />
+                   </button>
+                   <button onClick={() => setShowTutorial(true)} className="p-2 hover:bg-white/10 rounded-full transition-colors text-teal-400" title="View Onboarding Tutorial">
+                     <HelpCircle className="w-4 h-4" />
+                   </button>
+                   <button onClick={toggleMute} className="p-2 hover:bg-white/10 rounded-full transition-colors text-amber-400" title={isAudioMuted ? "Unmute Sound" : "Mute Sound"}>
+                     {isAudioMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                   </button>
+                   <button onClick={toggleMotion} className="p-2 hover:bg-white/10 rounded-full transition-colors text-pink-400" title={reducedMotionSetting ? "Enable Motion/Effects" : "Disable Motion/Effects"}>
+                     {reducedMotionSetting ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                   </button>
                    {playerRole === 'host' && (
                      <button onClick={onRetry} className="p-2 hover:bg-white/10 rounded-full transition-colors" title="Retry AI Response">
                        <RefreshCw className="w-4 h-4 text-slate-300" />
@@ -128,24 +307,35 @@ export default function GameScreen({
                 </div>
              </div>
 
+             {/* Objective Tracker HUD */}
+             <div className="shrink-0">
+               <ObjectiveTracker chapterTitle={chapterTitle} objectiveText={objective} />
+             </div>
+
              {modeNotice && (
                <div className="shrink-0 bg-amber-950/70 border border-amber-700/50 text-amber-100 text-sm rounded-lg px-4 py-3">
                  {modeNotice}
                </div>
              )}
 
-             <div className="shrink-0 md:hidden grid grid-cols-3 gap-2 text-center text-xs">
-               <div className="bg-black/35 border border-white/10 rounded-lg px-3 py-2">
-                 <div className="text-slate-400 uppercase tracking-wider">Pup</div>
-                 <div className="font-bold text-white truncate">{selectedChar.name}</div>
+             <div 
+               onClick={() => setIsDrawerOpen(true)}
+               className="shrink-0 md:hidden grid grid-cols-3 gap-2 text-center text-xs cursor-pointer hover:bg-white/5 active:bg-white/10 transition-colors p-1 rounded-xl border border-white/10 bg-black/20"
+               title="Open Pack Inventory & Character Info"
+             >
+               <div className="bg-black/35 border border-white/5 rounded-lg px-3 py-2">
+                 <div className="text-slate-400 uppercase tracking-wider text-[10px]">Pup</div>
+                 <div className="font-bold text-white truncate text-sm flex items-center justify-center gap-1">
+                   {selectedChar.name} <Sparkles className="w-3.5 h-3.5 text-indigo-300 fill-indigo-400/20" />
+                 </div>
                </div>
-               <div className="bg-black/35 border border-white/10 rounded-lg px-3 py-2">
-                 <div className="text-slate-400 uppercase tracking-wider">Items</div>
-                 <div className="font-bold text-white">{localInventory.reduce((total, item) => total + item.quantity, 0)}</div>
+               <div className="bg-black/35 border border-white/5 rounded-lg px-3 py-2">
+                 <div className="text-slate-400 uppercase tracking-wider text-[10px]">HP</div>
+                 <div className="font-bold text-emerald-400 text-sm">{myHp} / 100</div>
                </div>
-               <div className="bg-black/35 border border-white/10 rounded-lg px-3 py-2">
-                 <div className="text-slate-400 uppercase tracking-wider">Badges</div>
-                 <div className="font-bold text-white">{localBadges.length}</div>
+               <div className="bg-black/35 border border-white/5 rounded-lg px-3 py-2">
+                 <div className="text-slate-400 uppercase tracking-wider text-[10px]">Badges</div>
+                 <div className="font-bold text-amber-300 text-sm">{localBadges.length}</div>
                </div>
              </div>
 
@@ -153,27 +343,212 @@ export default function GameScreen({
              <MessageLog messages={messages} />
 
              {/* Action Bar */}
-             <div className="shrink-0">
+             <div className="shrink-0 relative">
+               {mistHint && (
+                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-4 w-11/12 max-w-md bg-purple-950/90 border border-purple-500/40 text-purple-200 text-xs px-4 py-3 rounded-xl shadow-[0_0_20px_rgba(168,85,247,0.3)] backdrop-blur-md flex items-start gap-2.5 z-40 animate-fade-in-up">
+                   <span className="text-xl">🦉</span>
+                   <div>
+                     <span className="font-serif font-bold text-purple-300 uppercase tracking-widest block text-[9px] mb-0.5">Mist's telepathic nudge</span>
+                     <span className="font-serif leading-relaxed italic">"{mistHint.replace("Mist whispers: ", "")}"</span>
+                   </div>
+                 </div>
+               )}
                <FrostContainer className="p-4" noBorder>
-                  {/* If AI asks for roll, we could inject a special button here or relying on suggestions */}
-                  {canRoll ? (
-                     <button
-                       onClick={triggerDice}
-                       disabled={showDice}
-                       className={`w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-lg shadow-lg shadow-indigo-500/30 mb-4 flex items-center justify-center gap-2 ${aiRequestedRoll ? 'animate-bounce' : ''}`}
-                     >
-                       <Dice5 className="w-5 h-5" /> Roll D20
-                     </button>
-                  ) : null}
+                   {/* Ability Bar */}
+                   {!isDowned && (
+                      <div className="mb-4">
+                        <AbilityBar
+                          charId={selectedChar.id}
+                          cooldownChapter={myPlayer?.abilityCooldownChapter}
+                          currentChapterId={chapterId}
+                          onUseAbility={handleUseAbilityClick}
+                          disabled={isThinking}
+                        />
+                      </div>
+                   )}
+
+                   {/* Cooperative multiplayer revive action */}
+                   {downedTeammate && !isDowned && (
+                      <button
+                        onClick={async () => {
+                          await onUpdatePlayerHp(downedTeammate.charName, 50);
+                          await onSendMessage(`spend my turn to revive my packmate ${downedTeammate.charName}!`);
+                        }}
+                        className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg shadow-lg shadow-emerald-500/30 mb-4 flex items-center justify-center gap-2 transition-all active:scale-95"
+                      >
+                        <Heart className="w-5 h-5 fill-white animate-pulse" /> Revive {downedTeammate.charName} (+50 HP)
+                      </button>
+                   )}
+
+                   {/* Ignite Frost Crystal option */}
+                   {showIgniteButton && (
+                      <button
+                        onClick={() => setShowFinaleEditor(true)}
+                        className="w-full py-4 bg-gradient-to-r from-cyan-500 via-indigo-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-bold rounded-lg shadow-xl shadow-indigo-500/20 mb-4 flex items-center justify-center gap-2 transition-all hover:scale-[1.01] animate-pulse active:scale-95"
+                      >
+                        <Star className="w-5 h-5 fill-white" /> Ignite the Frost Crystal
+                      </button>
+                   )}
+
+                   {/* If AI asks for roll, we could inject a special button here or relying on suggestions */}
+                   {canRoll && !isDowned && !showIgniteButton ? (
+                      <button
+                        onClick={triggerDice}
+                        disabled={showDice}
+                        className={`w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-lg shadow-lg shadow-indigo-500/30 mb-4 flex items-center justify-center gap-2 ${aiRequestedRoll ? 'animate-bounce' : ''}`}
+                      >
+                        <Dice5 className="w-5 h-5" /> Roll D20
+                      </button>
+                   ) : null}
 
                   <ActionBar
-                    suggestions={suggestions}
+                    suggestions={isDowned ? [] : suggestions}
                     onAction={handleAction}
                     characterName={selectedChar.name}
                     isThinking={isThinking}
                   />
                </FrostContainer>
              </div>
+
+             {/* Downed Overlay */}
+             {isDowned && (
+               <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-slate-950/90 backdrop-blur-md p-6 text-center select-none rounded-xl border border-red-500/20">
+                 <div className="w-16 h-16 rounded-full bg-red-500/20 text-red-500 border border-red-500/30 flex items-center justify-center mb-4 animate-pulse">
+                   <Heart className="w-8 h-8 fill-current" />
+                 </div>
+                 <h2 className="text-2xl font-serif font-bold text-white mb-2">You Have Been Downed!</h2>
+                 {isMultiplayer ? (
+                   <p className="text-sm text-slate-300 max-w-sm mb-6 leading-relaxed">
+                     You have run out of energy. Wait for a packmate to use their turn to revive you!
+                   </p>
+                 ) : (
+                   <>
+                     <p className="text-sm text-slate-300 max-w-sm mb-6 leading-relaxed">
+                       The cold was too intense, and the pack had to turn back. Rest and try again!
+                     </p>
+                     <button
+                       onClick={onRetryChapter}
+                       className="px-6 py-3 bg-red-600 hover:bg-red-500 text-white font-bold rounded-lg shadow-lg shadow-red-500/20 transition-all active:scale-95"
+                     >
+                       Retry Chapter
+                     </button>
+                   </>
+                 )}
+               </div>
+             )}
+
+             {/* Victory Overlay */}
+             {gameStatus === 'ended' && (
+               <div className="absolute inset-0 z-35 flex flex-col items-center justify-center bg-slate-950/95 backdrop-blur-md p-6 text-center select-none rounded-xl border border-amber-500/20">
+                 <div className="w-20 h-20 rounded-full bg-amber-500/20 text-amber-500 border border-amber-500/30 flex items-center justify-center mb-6 animate-bounce">
+                   <Star className="w-10 h-10 fill-current" />
+                 </div>
+                 <h2 className="text-3xl font-serif font-extrabold text-amber-400 tracking-widest mb-2">PACK LEGEND</h2>
+                 <p className="text-sm text-slate-300 max-w-sm mb-6 leading-relaxed">
+                   You have successfully reached the Frost Crystal, ignited its light, and saved the Moonshine River Pack!
+                 </p>
+                 <div className="flex gap-4">
+                   <button
+                     onClick={onLeaveGame}
+                     className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-lg shadow-lg shadow-indigo-500/20 transition-all active:scale-95"
+                   >
+                     Play Again
+                   </button>
+                 </div>
+               </div>
+             )}
+
+             {/* Finale Editor Overlay */}
+             {showFinaleEditor && gameStatus !== 'ended' && (
+               <div className="absolute inset-0 z-30 flex flex-col bg-slate-950/95 backdrop-blur-md p-6 select-none rounded-xl border border-indigo-500/30 overflow-y-auto">
+                 <h2 className="text-xl font-serif font-extrabold text-indigo-300 tracking-wider text-center mb-1">
+                   ✨ The Fate of Moonshine River ✨
+                 </h2>
+                 <p className="text-xs text-slate-400 text-center mb-6">
+                   Select the path of the Frost Crystal and write your story's ending!
+                 </p>
+
+                 {/* Choices */}
+                 <div className="grid grid-cols-2 gap-4 mb-6 shrink-0">
+                   <button
+                     onClick={() => setFinaleChoice('light')}
+                     className={`p-4 rounded-xl border text-center font-bold flex flex-col items-center gap-2 transition-all ${
+                       finaleChoice === 'light'
+                         ? 'border-amber-400 bg-amber-500/10 text-amber-300 shadow-[0_0_15px_rgba(245,158,11,0.2)]'
+                         : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'
+                     }`}
+                   >
+                     <span className="text-2xl">☀️</span>
+                     <span>Light Path</span>
+                     <span className="text-[10px] font-normal text-slate-400">Restore the River</span>
+                   </button>
+                   <button
+                     onClick={() => setFinaleChoice('dark')}
+                     className={`p-4 rounded-xl border text-center font-bold flex flex-col items-center gap-2 transition-all ${
+                       finaleChoice === 'dark'
+                         ? 'border-purple-400 bg-purple-500/10 text-purple-300 shadow-[0_0_15px_rgba(168,85,247,0.2)]'
+                         : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'
+                     }`}
+                   >
+                     <span className="text-2xl">🌙</span>
+                     <span>Dark Path</span>
+                     <span className="text-[10px] font-normal text-slate-400">Destroy the River</span>
+                   </button>
+                 </div>
+
+                 {/* Textarea */}
+                 {finaleChoice && (
+                   <div className="flex-1 flex flex-col gap-2 min-h-[180px]">
+                     <label className="text-[10px] text-slate-400 font-bold tracking-widest uppercase">
+                       CO-AUTHOR WORKSPACE: Write the final scene...
+                     </label>
+                     <textarea
+                       value={endingText}
+                       onChange={(e) => setEndingText(e.target.value)}
+                       placeholder={
+                         finaleChoice === 'light'
+                           ? "Describe how Shiver and the pack ignite the crystal with light magic, purifying the Moonshine River..."
+                           : "Describe how the crystal's dark energy collapses the poisoned river, breaking the old world to start anew..."
+                       }
+                       className="flex-1 w-full bg-slate-900/60 border border-white/10 rounded-lg p-3 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 resize-none font-sans"
+                     />
+                     
+                     <div className="flex justify-end gap-3 mt-4 shrink-0">
+                       <button
+                         onClick={() => {
+                           setShowFinaleEditor(false);
+                           setFinaleChoice(null);
+                           setEndingText('');
+                         }}
+                         className="px-4 py-2 text-xs font-bold text-slate-400 hover:text-white transition-colors"
+                       >
+                         Cancel
+                       </button>
+                       <button
+                         onClick={async () => {
+                           if (!endingText.trim()) return;
+                           const choiceName = finaleChoice === 'light' ? 'Light' : 'Dark';
+                           
+                           // Send message
+                           await onSendMessage(`ignites the Frost Crystal with ${choiceName} magic!\n\n${endingText}`);
+                           
+                           // Trigger objective completion command
+                           await onSendMessage('[[COMPLETE_OBJECTIVE: chapter_7]]');
+                           
+                           setShowFinaleEditor(false);
+                           setFinaleChoice(null);
+                           setEndingText('');
+                         }}
+                         disabled={!endingText.trim()}
+                         className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 text-white text-xs font-bold rounded-lg shadow-lg shadow-indigo-500/20 active:scale-95 transition-all"
+                       >
+                         Write Ending ✒️
+                       </button>
+                     </div>
+                   </div>
+                 )}
+               </div>
+             )}
           </div>
 
           {/* RIGHT COLUMN: Mobile Inventory / Extra Info (Optional, keeping simple for now) */}
@@ -182,7 +557,86 @@ export default function GameScreen({
       </ScreenShake>
 
       {/* Overlays */}
-      <Dice3D isRolling={showDice} onRollComplete={handleRollComplete} />
+      <Dice3D
+        isRolling={showDice}
+        onRollComplete={handleRollComplete}
+        statAbbr={activeStatAbbr}
+        modifier={activeModifier}
+      />
+
+      <MagicBurst trigger={magicTrigger} type={magicVfxType} />
+
+      <BottomSheet
+        isOpen={isDrawerOpen}
+        onClose={() => setIsDrawerOpen(false)}
+        title={`${selectedChar.name} - Pack Info`}
+      >
+        <CharacterSheet character={selectedChar} earnedBadges={localBadges} health={myHp} />
+        <InventoryGrid items={localInventory} onItemSelect={(item) => setActiveItemToUse(item)} />
+        <PartyStatus players={players} localPlayerCharName={selectedChar.name} />
+      </BottomSheet>
+
+      {activeItemToUse && (
+        <ItemUseMenu
+          item={activeItemToUse}
+          onClose={() => setActiveItemToUse(null)}
+          onUse={() => {
+            if (onUseItem) {
+              onUseItem(selectedChar.name, activeItemToUse.id);
+            }
+          }}
+          isDowned={isDowned || playerRole === 'spectator'}
+        />
+      )}
+
+      {/* Spirit Collection Modal */}
+      <SpiritCollection
+        isOpen={showSpirits}
+        onClose={() => setShowSpirits(false)}
+        chapterId={chapterId}
+      />
+
+      {/* Tutorial Overlay */}
+      <TutorialOverlay
+        isOpen={showTutorial}
+        onClose={() => setShowTutorial(false)}
+      />
+
+      {/* Rank Up Level Up Overlay */}
+      {showLevelUpRank && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
+          <FrostContainer className="max-w-md w-full p-8 text-center relative border border-amber-500/30 shadow-[0_0_50px_rgba(245,158,11,0.25)] flex flex-col items-center">
+            <div className="w-20 h-20 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center mb-6 animate-bounce">
+              <Sparkles className="w-10 h-10 fill-current" />
+            </div>
+
+            <h2 className="text-3xl font-serif font-extrabold text-amber-400 tracking-widest mb-1 animate-pulse">
+              RANK UP!
+            </h2>
+            <p className="text-xs text-slate-400 uppercase tracking-widest font-mono mb-4">
+              You have grown stronger
+            </p>
+            
+            <div className="text-base text-slate-200 mb-6 font-sans">
+              Your dedication to the pack has earned you the rank of:
+              <div className="text-2xl font-serif text-white font-bold mt-2 bg-white/5 border border-white/10 rounded-lg py-2 px-4 inline-block">
+                ✨ {showLevelUpRank} ✨
+              </div>
+            </div>
+
+            <button
+              onClick={() => {
+                setShowLevelUpRank(null);
+                setMagicVfxType('crit_gold');
+                setMagicTrigger(prev => prev + 1);
+              }}
+              className="px-6 py-2.5 bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-900 font-serif font-extrabold rounded-lg shadow-lg hover:shadow-amber-500/20 transition-all active:scale-95"
+            >
+              Acknowledge Rank 🐾
+            </button>
+          </FrostContainer>
+        </div>
+      )}
 
     </div>
   );

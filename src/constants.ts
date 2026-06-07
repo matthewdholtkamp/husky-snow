@@ -169,3 +169,62 @@ export const CHARACTERS: Character[] = [
     startingScene: "The sharp scent of crushed herbs fills the Healer's Den. Sweetbrush, the golden-eyed Border Collie, nudges some aloe toward you. 'Pack your pouches, Flurry,' she says. 'The wind whispers of trouble.'"
   }
 ];
+
+// --- Spirit Cards Registry (T4) ---
+export interface SpiritCard {
+  id: string;
+  name: string;
+  element: 'shiver' | 'flurry' | 'oak' | 'glacier' | 'luna';
+  color: string;
+  unlockedAtChapter: string;
+  lore: string;
+  sigil: string;
+}
+
+export const SPIRIT_CARDS: SpiritCard[] = [
+  {
+    id: 'mist',
+    name: 'Mistyfeather (Mist)',
+    element: 'shiver',
+    color: 'text-indigo-300 border-indigo-500/30 bg-indigo-500/5 shadow-[0_0_15px_rgba(99,102,241,0.1)]',
+    unlockedAtChapter: 'chapter_1',
+    lore: "Mist warns the trainee pups of the incoming frost rot. She speaks in the minds of those who will listen: 'The frost is not a force of nature, little star. It is a choice.'",
+    sigil: '🦉'
+  },
+  {
+    id: 'starwhirl',
+    name: 'Starwhirl',
+    element: 'glacier',
+    color: 'text-sky-300 border-sky-500/30 bg-sky-500/5 shadow-[0_0_15px_rgba(14,165,233,0.1)]',
+    unlockedAtChapter: 'chapter_2',
+    lore: "The legendary husky patriarch who first saw the stars rotate in the sky. He guides the elders with deep wisdom: 'The path is written in the sky, but walked on the snow.'",
+    sigil: '🌀'
+  },
+  {
+    id: 'dragonfly',
+    name: 'Dragonfly',
+    element: 'oak',
+    color: 'text-emerald-300 border-emerald-500/30 bg-emerald-500/5 shadow-[0_0_15px_rgba(16,185,129,0.1)]',
+    unlockedAtChapter: 'chapter_5',
+    lore: "Dragonfly stands like an oak against the wind. She guards the camp boundary lines with endless vigilance and protective concerns: 'A pack is only as safe as its boundary.'",
+    sigil: '🛡️'
+  },
+  {
+    id: 'sweetbrush',
+    name: 'Sweetbrush',
+    element: 'flurry',
+    color: 'text-amber-300 border-amber-500/30 bg-amber-500/5 shadow-[0_0_15px_rgba(245,158,11,0.1)]',
+    unlockedAtChapter: 'chapter_6',
+    lore: "Sweetbrush gathered healing herbs for three generations of the Moonshine River Pack. Her spirit now warms the frozen soil: 'Every leaf is a breath of the forest.'",
+    sigil: '🌿'
+  },
+  {
+    id: 'lunaprie',
+    name: 'Lunaprie',
+    element: 'luna',
+    color: 'text-purple-300 border-purple-500/30 bg-purple-500/5 shadow-[0_0_15px_rgba(168,85,247,0.1)]',
+    unlockedAtChapter: 'chapter_7',
+    lore: "The ancient spirit of the moon itself. She watches over the trainees' trials from her starry throne: 'The river flows, the moon shines, and the pack endures.'",
+    sigil: '🌙'
+  }
+];

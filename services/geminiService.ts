@@ -123,13 +123,20 @@ ${historyToSummarize.map((m) => `(${m.author || m.role}): ${m.text}`).join('\n')
   }
 };
 
-const buildSystemInstruction = (players: Player[]): string => {
+const buildSystemInstruction = (players: Player[], chapterId?: string, objective?: string): string => {
   const allPlayerLore = players
     .map((p) => {
       const char = CHARACTERS.find((c) => c.name === p.charName);
       return char ? char.loreContext : `${p.charName} (Unknown Lore)`;
     })
     .join('\n');
+
+  const currentChapterContext = chapterId && objective
+    ? `\nCURRENT CHAPTER & OBJECTIVE:
+- Active Chapter: ${chapterId}
+- Current Objective: "${objective}"
+- When players achieve this objective, append exactly \`[[COMPLETE_OBJECTIVE: ${chapterId}]]\` on a separate line to advance the story. Do not make up a new chapter yourself; the system will transition once this command is received.`
+    : '';
 
   return `
 You are Quinn, the storyteller for a cinematic text RPG called "Husky's Snow: Tales of the Moonshine River Pack".
@@ -147,22 +154,32 @@ STYLE GUIDELINES:
 GAMEPLAY MECHANICS:
 1. DICE ROLLS:
    - If a player attempts an uncertain action, do not resolve the outcome immediately.
-   - Describe the challenge and command exactly: "**Roll the D20 to [action].**"
-   - After a roll message, interpret the result briefly: 1 = critical fail, 2-10 = fail, 11-15 = success, 16-20 = critical success.
+   - Describe the challenge and command exactly: "**Roll the D20 + [STAT] to [action].**" where [STAT] is one of: STR (Strength), AGI (Agility), INT (Smart), or SPI (Spirit). Choose the stat that best fits the action.
+   - Do not resolve the action until the player's roll TOTAL is provided.
+   - Interpret the TOTAL (not the raw die) to determine the outcome:
+     * Natural 1 or TOTAL <= 1: Critical Fail (crit fumble)
+     * TOTAL 2-10: Failure
+     * TOTAL 11-15: Success
+     * Natural 20 or TOTAL >= 16: Critical Success
    - Never ask for another roll until the previous roll result has been interpreted.
 
 2. HIDDEN COMMANDS:
    Put state commands at the very end of your response on separate lines.
    - Give item: [[ADD_ITEM: PlayerName | ItemId]]
    - Award badge: [[AWARD_BADGE: PlayerName | BadgeId]]
+   - Inflict damage: [[DAMAGE: PlayerName | N]] (use reasonable small numbers, e.g., 5 to 20, when players fail rolls, trigger traps, or get hurt)
+   - Restore health: [[HEAL: PlayerName | N]] (when players rest, consume items, or receive healing support)
+   - Change active scene: [[SCENE: scene_id]] (scene_ids: cave, forest, river, snowfield, ravine, road, coyote_camp, dreamland)
+   - Complete active chapter: [[COMPLETE_OBJECTIVE: chapter_id]] (only when players achieve the active objective)
    - Item IDs: aloe, spiderweb, berry, net, crystal, trap, moss
    - Badge IDs: catch_fish, save_pup, brave_stand, legend_pack
-   - Only give items or badges after a player visibly earns them through action or a resolved roll. Do not hand out rewards as filler.
+   - Only give items, badges, damage, or healing after a player visibly earns/experiences them through action or a resolved roll. Do not hand out rewards/status changes as filler.
 
 3. SUGGESTIONS:
    Always end the visible turn with "What do you do?"
    Then provide 3-4 distinct clickable suggestions, each on its own line starting with "-".
    Suggestions must be specific, actionable, and safe for the current scene. Avoid generic options like "continue" or "explore more" unless tied to a concrete clue.
+${currentChapterContext}
 
 LORE CONTEXT:
 The Moonshine River is poisoned. The prophecy says the young pack must find the crystal to save the pack.
@@ -208,7 +225,9 @@ const parseAIText = (aiText: string): AIResponse => {
 export const generateAIResponse = async (
   history: Message[],
   prompt: string,
-  players: Player[]
+  players: Player[],
+  chapterId?: string,
+  objective?: string
 ): Promise<AIResponse> => {
   let summary: string | null = null;
   let processedHistory = [...history];
@@ -242,7 +261,7 @@ export const generateAIResponse = async (
   const text = await generateText({
     model: PRIMARY_MODEL,
     fallbackModel: FALLBACK_MODEL,
-    systemInstruction: buildSystemInstruction(players),
+    systemInstruction: buildSystemInstruction(players, chapterId, objective),
     contents,
     generationConfig: {
       maxOutputTokens: 900,
