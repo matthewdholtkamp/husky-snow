@@ -7,6 +7,7 @@ interface ActionBarProps {
   characterName: string;
   isThinking: boolean;
   disabled?: boolean;
+  placeholder?: string;
 }
 
 export const ActionBar: React.FC<ActionBarProps> = ({
@@ -14,7 +15,8 @@ export const ActionBar: React.FC<ActionBarProps> = ({
   onAction,
   characterName,
   isThinking,
-  disabled = false
+  disabled = false,
+  placeholder
 }) => {
 
   if (isThinking) {
@@ -91,7 +93,7 @@ export const ActionBar: React.FC<ActionBarProps> = ({
           name="customAction"
           type="text"
           disabled={disabled}
-          placeholder={disabled ? "⏳ Wait for your turn to act..." : `What does ${characterName} do?`}
+          placeholder={placeholder || (disabled ? "⏳ Wait for your turn to act..." : `What does ${characterName} do?`)}
           className={`
             w-full rounded px-4 py-2 text-sm transition-colors focus:outline-none
             ${disabled 

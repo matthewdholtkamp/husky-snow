@@ -8,6 +8,9 @@ interface ItemUseMenuProps {
   onClose: () => void;
   onUse: () => void;
   isDowned?: boolean;
+  isRollRequired?: boolean;
+  isMyTurn?: boolean;
+  isSpectator?: boolean;
 }
 
 export const ItemUseMenu: React.FC<ItemUseMenuProps> = ({
@@ -15,7 +18,25 @@ export const ItemUseMenu: React.FC<ItemUseMenuProps> = ({
   onClose,
   onUse,
   isDowned = false,
+  isRollRequired = false,
+  isMyTurn = true,
+  isSpectator = false,
 }) => {
+  const isDisabled = isDowned || !isMyTurn || isSpectator || isRollRequired;
+  let warningMessage = '';
+  let isWarningAmber = false;
+
+  if (isDowned) {
+    warningMessage = "You are currently downed! You cannot use items until a packmate revives you.";
+  } else if (isSpectator) {
+    warningMessage = "You are spectating this game. Spectators cannot use items.";
+  } else if (!isMyTurn) {
+    warningMessage = "It is not your turn! You must wait for your turn to use items.";
+  } else if (isRollRequired) {
+    warningMessage = "A roll is required! You must roll the D20 to resolve the current action first.";
+    isWarningAmber = true;
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
       <FrostContainer className="max-w-md w-full p-6 relative animate-fade-in-up">
@@ -52,11 +73,15 @@ export const ItemUseMenu: React.FC<ItemUseMenuProps> = ({
           </div>
         )}
 
-        {/* Downed warning */}
-        {isDowned && (
-          <div className="bg-rose-950/40 border border-rose-500/20 rounded-lg p-3 mb-6 flex items-start gap-2 text-rose-300 text-xs">
+        {/* Warning Banner */}
+        {warningMessage && (
+          <div className={`border rounded-lg p-3 mb-6 flex items-start gap-2 text-xs ${
+            isWarningAmber 
+              ? 'bg-amber-950/40 border-amber-500/20 text-amber-300' 
+              : 'bg-rose-950/40 border-rose-500/20 text-rose-300'
+          }`}>
             <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
-            <span>You are currently downed! You cannot use items until a packmate revives you.</span>
+            <span>{warningMessage}</span>
           </div>
         )}
 
@@ -73,7 +98,7 @@ export const ItemUseMenu: React.FC<ItemUseMenuProps> = ({
               onUse();
               onClose();
             }}
-            disabled={isDowned}
+            disabled={isDisabled}
             className="px-5 py-2 text-sm text-white font-serif bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 disabled:border-slate-700/50 rounded-lg shadow-lg hover:shadow-indigo-500/20 transition-all font-semibold border border-indigo-500/30"
           >
             Use Item

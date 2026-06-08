@@ -80,6 +80,23 @@ const sortMessages = (items: Message[]) => {
   });
 };
 
+const STARTING_NARRATIVE = `🌲 **WELCOME TO THE MOONSHINE RIVER PACK** 🌲
+
+The Moonshine River has always been the lifeblood of our pack. But lately, a dark, oily rot has taken hold, poisoning the waters and crying out in the minds of the forest spirits. Seven quest pups have been chosen to venture into the frozen peaks, find the legendary Frost Crystal, and ignite it to decide the fate of our home.
+
+You stand at the edge of the Faststream Forest. The river murmurs sick and black beside you. A dry, telepathic voice echoes in your mind: *'Finally awake, little stars? The frost rot is spreading. We must act.'* It is Mist, your telepathic guide.
+
+**What do you do?**`;
+
+const STARTING_SUGGESTIONS: Record<string, string[]> = {
+  'Shiver': ['Inspect the oily water', 'Ask Mist what she senses', 'Study the tree roots'],
+  'Oak': ['Look for tracks on the bank', 'Check the snare near the brush', 'Listen to the wind'],
+  'Glacier': ['Test the river current with a paw', 'Scan the ridge for threats', 'Stand alert and ready'],
+  'Flurry': ['Search for healing berries', 'Examine the sick plants', 'Calm your breathing'],
+  'Spruce': ['Scout ahead along the trail', 'Tell a quick joke to defuse tension', 'Climb a tree to look around'],
+  'Storm': ['Shove a rotten log aside', 'Growl at the dark shadows', 'Brag about your claws']
+};
+
 const resolvePlayerIndex = (targetName: string, players: Player[]): number => {
   const cleaned = targetName.trim().toLowerCase();
   let nameToFind = cleaned;
@@ -654,6 +671,7 @@ export default function App() {
           phase: 'playing' as const,
           turnOrder: [soloPlayer.charName],
           currentTurnIndex: 0,
+          suggestionsByPup: STARTING_SUGGESTIONS,
         };
 
         const updateGameDb = async () => {
@@ -670,10 +688,8 @@ export default function App() {
             await updateDoc(gameDocRef, { ...updateData, lastActiveAt: serverTimestamp() });
           }
 
-          // Trigger initial AI narration if message log is empty
           if (messages.length === 0) {
-            const dmInstruction = `INITIATE SESSION. The first player is ${soloPlayer.charName}. Starting Scene: ${soloPlayer.startingScene || 'river'}. You are starting Chapter 1: The Warning of Mist, with objective: "Investigate the Moonshine River and find out what is making the water sick." Ensure you begin with a [[SCENE: river]] command. Task: Narrate the scene. Add atmospheric details. End with: "What do you do?" and provide 3-4 suggestions.`;
-            await handleTriggerAIResponse([], dmInstruction, players);
+            await addMessageToDb('model', STARTING_NARRATIVE);
           }
         };
 
@@ -697,6 +713,7 @@ export default function App() {
           phase: 'playing' as const,
           turnOrder: order,
           currentTurnIndex: 0,
+          suggestionsByPup: STARTING_SUGGESTIONS,
         };
 
         const updateGameDb = async () => {
@@ -713,11 +730,8 @@ export default function App() {
             await updateDoc(gameDocRef, { ...updateData, lastActiveAt: serverTimestamp() });
           }
 
-          // Trigger initial AI narration if message log is empty
           if (messages.length === 0) {
-            const firstChar = sorted[0];
-            const dmInstruction = `INITIATE SESSION. The first player is ${firstChar.charName}. Starting Scene: ${firstChar.startingScene || 'river'}. You are starting Chapter 1: The Warning of Mist, with objective: "Investigate the Moonshine River and find out what is making the water sick." Ensure you begin with a [[SCENE: river]] command. Task: Narrate the scene. Add atmospheric details. End with: "What do you do?" and provide 3-4 suggestions.`;
-            await handleTriggerAIResponse([], dmInstruction, players);
+            await addMessageToDb('model', STARTING_NARRATIVE);
           }
         };
 

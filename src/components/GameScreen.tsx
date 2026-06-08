@@ -286,9 +286,19 @@ export default function GameScreen({
   const hasCrystal = localInventory.some(item => item.id === 'crystal' && item.quantity > 0);
   const showIgniteButton = chapterId === 'chapter_7' && hasCrystal && gameStatus !== 'ended' && !showFinaleEditor;
 
+  // Find the last model message to check for roll requests
+  const lastModelMessage = [...messages].reverse().find(m => m.role === 'model');
+  const aiRequestedRoll = lastModelMessage ? lastModelMessage.text.includes("Roll the D20") : false;
+
+  // Find if there has been a subsequent roll message resolving it
+  const lastModelIndex = lastModelMessage ? messages.findIndex(m => m.id === lastModelMessage.id) : -1;
+  const rollAlreadyDone = lastModelIndex !== -1 && messages.slice(lastModelIndex + 1).some(m => m.isRoll);
+
+  const isRollRequired = aiRequestedRoll && !rollAlreadyDone;
+
   // Determine if there is an active stat roll requested by the AI
   const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
-  const activeStatKey = lastMessage ? parseRollRequest(lastMessage.text) : null;
+  const activeStatKey = (isRollRequired && lastModelMessage) ? parseRollRequest(lastModelMessage.text) : null;
   const activeModifier = activeStatKey ? getModifier(selectedChar.stats[activeStatKey]) : 0;
   const activeStatAbbr = activeStatKey ? REVERSE_STAT_MAP[activeStatKey] : '';
 
@@ -343,7 +353,6 @@ export default function GameScreen({
   };
 
   const canRoll = playerRole !== 'spectator' && !isThinking && !showDice;
-  const aiRequestedRoll = messages.length > 0 && messages[messages.length - 1].text.includes("Roll the D20");
 
   return (
     <div className="relative w-full h-screen overflow-hidden font-sans text-slate-200">
@@ -463,7 +472,7 @@ export default function GameScreen({
                            cooldownChapter={myPlayer?.abilityCooldownChapter}
                            currentChapterId={chapterId}
                            onUseAbility={handleUseAbilityClick}
-                           disabled={isThinking || !isMyTurn}
+                           disabled={isThinking || !isMyTurn || isRollRequired}
                          />
                        </div>
                     )}
@@ -479,9 +488,9 @@ export default function GameScreen({
                            await onUpdatePlayerHp(downedTeammate.charName, 50);
                            await onSendMessage(`spend my turn and 30 Pack Heart to revive my packmate ${downedTeammate.charName}!`);
                          }}
-                         disabled={!isMyTurn || packHeart < 30}
+                         disabled={!isMyTurn || packHeart < 30 || isRollRequired}
                          className={`w-full py-4 text-white font-bold rounded-lg shadow-lg mb-4 flex items-center justify-center gap-2 transition-all ${
-                           (!isMyTurn || packHeart < 30)
+                           (!isMyTurn || packHeart < 30 || isRollRequired)
                              ? 'bg-slate-800 text-slate-500 border border-white/5 cursor-not-allowed shadow-none opacity-50' 
                              : 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-500/30 active:scale-95'
                          }`}
@@ -494,10 +503,10 @@ export default function GameScreen({
                     {/* Ignite Frost Crystal option */}
                     {showIgniteButton && (
                        <button
-                         onClick={() => isMyTurn && setShowFinaleEditor(true)}
-                         disabled={!isMyTurn}
+                         onClick={() => isMyTurn && !isRollRequired && setShowFinaleEditor(true)}
+                         disabled={!isMyTurn || isRollRequired}
                          className={`w-full py-4 text-white font-bold rounded-lg shadow-xl mb-4 flex items-center justify-center gap-2 transition-all ${
-                           !isMyTurn 
+                           (!isMyTurn || isRollRequired) 
                              ? 'bg-slate-800 text-slate-500 border border-white/5 cursor-not-allowed shadow-none opacity-50' 
                              : 'bg-gradient-to-r from-cyan-500 via-indigo-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 shadow-indigo-500/20 hover:scale-[1.01] animate-pulse active:scale-95'
                          }`}
@@ -515,14 +524,14 @@ export default function GameScreen({
                            !isMyTurn 
                              ? 'bg-slate-800 text-slate-500 border border-white/5 cursor-not-allowed shadow-none opacity-50' 
                              : 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-500/30 active:scale-[0.98]'
-                         } ${aiRequestedRoll && isMyTurn ? 'animate-bounce' : ''}`}
+                         } ${isRollRequired && isMyTurn ? 'animate-bounce' : ''}`}
                        >
                          <Dice5 className="w-5 h-5" /> Roll D20
                        </button>
                     ) : null}
 
                     {/* Re-roll option */}
-                    {canRoll && !isDowned && !showIgniteButton && lastMessage?.isRoll && (
+                    {canRoll && !isDowned && !showIgniteButton && lastMessage?.isRoll && !isRollRequired && (
                        <button
                          onClick={async () => {
                            if (!isMyTurn || packHeart < 20) return;
@@ -543,11 +552,12 @@ export default function GameScreen({
                     )}
 
                     <ActionBar
-                      suggestions={isDowned ? [] : ((suggestionsByPup && suggestionsByPup[selectedChar.name]) || suggestions)}
+                      suggestions={isDowned || isRollRequired ? [] : ((suggestionsByPup && suggestionsByPup[selectedChar.name]) || suggestions)}
                       onAction={handleAction}
                       characterName={selectedChar.name}
                       isThinking={isThinking}
-                      disabled={!isMyTurn}
+                      disabled={!isMyTurn || isRollRequired}
+                      placeholder={isRollRequired ? "🎲 Roll the D20 to resolve the action..." : undefined}
                     />
                </FrostContainer>
              </div>
@@ -727,7 +737,10 @@ export default function GameScreen({
               onUseItem(selectedChar.name, activeItemToUse.id);
             }
           }}
-          isDowned={isDowned || playerRole === 'spectator' || !isMyTurn}
+          isDowned={isDowned}
+          isRollRequired={isRollRequired}
+          isMyTurn={isMyTurn}
+          isSpectator={playerRole === 'spectator'}
         />
       )}
 
