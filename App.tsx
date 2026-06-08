@@ -688,7 +688,7 @@ export default function App() {
             await updateDoc(gameDocRef, { ...updateData, lastActiveAt: serverTimestamp() });
           }
 
-          if (messages.length === 0) {
+          if (!messages.some(m => m.role === 'model')) {
             await addMessageToDb('model', STARTING_NARRATIVE);
           }
         };
@@ -730,7 +730,7 @@ export default function App() {
             await updateDoc(gameDocRef, { ...updateData, lastActiveAt: serverTimestamp() });
           }
 
-          if (messages.length === 0) {
+          if (!messages.some(m => m.role === 'model')) {
             await addMessageToDb('model', STARTING_NARRATIVE);
           }
         };
