@@ -1,6 +1,10 @@
 
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+// Self-hosted narrative serif (bundled by Vite; no CDN dependency for story text)
+import '@fontsource/libre-baskerville/400.css';
+import '@fontsource/libre-baskerville/400-italic.css';
+import '@fontsource/libre-baskerville/700.css';
 import App from './App';
 import ErrorBoundary from './components/ErrorBoundary';
 
