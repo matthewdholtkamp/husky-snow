@@ -10,7 +10,8 @@
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Inter:wght@300;400;500;600&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+    <!-- Libre Baskerville (story text) is self-hosted via @fontsource and bundled by Vite -->
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
 
     <!-- Tailwind CSS (CDN) -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -86,6 +87,30 @@
       }
       .animate-fade-in-up {
         animation: fade-in-up 0.5s ease-out forwards;
+      }
+
+      /* --- Storybook presentation (R3-A) --- */
+
+      /* Book-page frame: hairline inner border around the story log */
+      .book-page::after {
+        content: '';
+        position: absolute;
+        inset: 8px;
+        border: 1px solid rgba(186, 230, 253, 0.12); /* frost-200 hairline */
+        border-radius: 10px;
+        pointer-events: none;
+        z-index: 20;
+      }
+
+      /* Drop cap on chapter/scene-opening paragraphs */
+      .drop-cap p:first-of-type::first-letter {
+        float: left;
+        font-family: 'Cinzel', serif;
+        font-size: 3.1em;
+        line-height: 0.85;
+        padding: 0.06em 0.12em 0 0;
+        color: #7dd3fc; /* frost-300 */
+        text-shadow: 0 0 18px rgba(56, 189, 248, 0.35);
       }
     </style>
 </head>

@@ -5,12 +5,15 @@ interface TypewriterProps {
   text: string;
   speed?: number; // ms per character
   onComplete?: () => void;
+  /** Optional presentation hook: styles the currently displayed substring (e.g. storybook markup). */
+  render?: (displayed: string) => React.ReactNode;
 }
 
 export const Typewriter: React.FC<TypewriterProps> = ({
   text,
   speed = 15,
   onComplete,
+  render,
 }) => {
   const [displayedText, setDisplayedText] = useState('');
   const [isFinished, setIsFinished] = useState(false);
@@ -101,7 +104,7 @@ export const Typewriter: React.FC<TypewriterProps> = ({
       className={`cursor-pointer select-text relative ${!isFinished ? 'after:content-["▊"] after:ml-0.5 after:text-indigo-400 after:animate-pulse' : ''}`}
       title={!isFinished ? "Click to skip typing effect" : undefined}
     >
-      {displayedText}
+      {render ? render(displayedText) : displayedText}
     </div>
   );
 };
