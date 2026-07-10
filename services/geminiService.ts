@@ -19,6 +19,7 @@ interface AIResponse {
   narrative: string;
   suggestions: string[];
   commands: string[];
+  suggestionsByPup?: Record<string, string[]>;
 }
 
 interface WorkerContent {
@@ -97,7 +98,7 @@ const generateText = async ({
   throw new Error('The spirits are silent.');
 };
 
-const summarizeHistory = async (historyToSummarize: Message[]): Promise<string> => {
+export const summarizeHistory = async (historyToSummarize: Message[]): Promise<string> => {
   const summarizationPrompt = `
 You are a story summarizer for a text-based RPG called "Husky's Snow".
 Concise summary only. Focus on key plot points, character actions, locations visited, major decisions, items acquired, badges earned, and unresolved threats.
